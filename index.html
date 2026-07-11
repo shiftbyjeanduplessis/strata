@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#080a0d" />
+    <title>STRATA</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="assets/icon-192.png" />
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">STRATA</p>
+          <h1 id="page-title">Today</h1>
+        </div>
+        <button id="install-btn" class="ghost small" type="button" hidden>Install</button>
+      </header>
+
+      <div id="app-notice" class="app-notice" role="status" aria-live="polite" hidden></div>
+
+      <main id="view" class="view" aria-live="polite"></main>
+
+      <nav class="bottom-nav" aria-label="Primary">
+        <button data-route="today" class="nav-item active" type="button">Today</button>
+        <button data-route="training" class="nav-item" type="button">Training</button>
+        <button data-route="body" class="nav-item" type="button">Body</button>
+        <button data-route="physique" class="nav-item" type="button">Physique</button>
+        <button data-route="history" class="nav-item" type="button">History</button>
+      </nav>
+    </div>
+
+    <aside id="rest-timer" class="rest-timer hidden" aria-live="polite" aria-label="Rest timer">
+      <div class="rest-timer-copy">
+        <p id="rest-timer-status" class="label">Resting</p>
+        <strong id="rest-timer-time" class="rest-timer-time">00:00</strong>
+        <span id="rest-timer-exercise" class="rest-timer-exercise"></span>
+      </div>
+      <div class="rest-timer-actions">
+        <button class="ghost small" data-timer-adjust="-15" type="button">−15s</button>
+        <button class="ghost small" data-timer-adjust="15" type="button">+15s</button>
+        <button id="rest-timer-dismiss" class="secondary small" type="button">Skip</button>
+      </div>
+    </aside>
+
+
+    <dialog id="add-exercise-dialog" class="exercise-dialog" aria-labelledby="add-exercise-title">
+      <form id="add-exercise-form" class="exercise-dialog-card">
+        <header class="exercise-dialog-head">
+          <div>
+            <p class="eyebrow">TRAINING STRATA</p>
+            <h2 id="add-exercise-title">Add exercise</h2>
+          </div>
+          <button id="add-exercise-cancel" class="dialog-close" type="button" aria-label="Close">×</button>
+        </header>
+
+        <label class="field">
+          <span>Exercise library</span>
+          <select id="saved-exercise-select" name="savedExercise">
+            <option value="">New exercise</option>
+          </select>
+        </label>
+
+        <div class="form-grid">
+          <label class="field form-span-2"><span>Exercise name</span><input name="name" type="text" autocomplete="off" placeholder="e.g. Cable lateral raise" required /></label>
+          <label class="field"><span>Muscle</span><input name="muscle" type="text" autocomplete="off" placeholder="e.g. Side delts" /></label>
+          <label class="field"><span>Type</span><select name="type">
+            <option value="isolation">Isolation</option>
+            <option value="accessory">Accessory</option>
+            <option value="machine">Machine</option>
+            <option value="unilateral">Unilateral</option>
+            <option value="compound">Compound</option>
+            <option value="hinge">Hinge</option>
+            <option value="strength">Heavy strength</option>
+          </select></label>
+          <label class="field"><span>Working sets</span><input name="sets" type="number" inputmode="numeric" min="1" max="12" value="3" required /></label>
+          <label class="field"><span>Target reps</span><input name="reps" type="text" value="8–12" placeholder="8–12" required /></label>
+          <label class="field"><span>Load format</span><select name="loadMode">
+            <option value="total">Total load</option>
+            <option value="pair">Per hand / paired</option>
+            <option value="perLeg">Reps per leg</option>
+            <option value="external">External load only</option>
+            <option value="bodyweightAdded">Bodyweight + added load</option>
+          </select></label>
+          <label class="field"><span>Rest</span><select name="restSeconds">
+            <option value="">Automatic</option>
+            <option value="60">60 sec</option>
+            <option value="75">75 sec</option>
+            <option value="90">90 sec</option>
+            <option value="120">2 min</option>
+            <option value="150">2 min 30</option>
+            <option value="180">3 min</option>
+          </select></label>
+        </div>
+        <p class="dialog-note">The exercise is added after your current exercise and saved for reuse in future workouts.</p>
+        <button class="primary full" type="submit">Add to workout</button>
+      </form>
+    </dialog>
+
+    <dialog id="exercise-history-dialog" class="exercise-history-dialog" aria-label="Exercise history">
+      <div id="exercise-history-content" class="exercise-history-dialog-card"></div>
+    </dialog>
+
+    <template id="exercise-row-template">
+      <article class="exercise-card"></article>
+    </template>
+
+    <script src="src/app.js"></script>
+  </body>
+</html>

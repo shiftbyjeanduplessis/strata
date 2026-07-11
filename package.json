@@ -1,0 +1,1 @@
+{"scripts":{"start":"node scripts/serve.cjs"},"dependencies":{},"devDependencies":{}}
