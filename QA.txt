@@ -1,1 +1,1 @@
-Checked JavaScript syntax, file integrity, Supabase SQL setup file included. Runtime Supabase sync requires your project URL, anon key and SQL table.
+STRATA v1.5.3 QA: built-in Supabase config, sign-in only, auto restore/merge on sign-in, debounced auto-sync after bodyweight changes and workout completion.

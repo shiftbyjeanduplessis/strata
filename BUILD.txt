@@ -1,1 +1,1 @@
-STRATA v1.5.2 — Supabase cloud backup foundation
+STRATA v1.5.3 — proper sign-in + auto-sync

@@ -1,3 +1,18 @@
+# STRATA v1.5.3 — Proper Sign-In + Auto-Sync
+
+This release removes the annoying per-device Supabase setup flow. The STRATA Supabase project URL and publishable key are now built into the app, so each device only needs sign-in.
+
+## v1.5.3 changes
+
+- Sign-in is now the main cloud flow; URL/key fields are hidden under Advanced Supabase settings.
+- Supabase settings default to the STRATA project automatically.
+- On sign-in, STRATA restores/merges the cloud backup and then syncs the local state back up.
+- On app open, an existing Supabase session automatically restores/merges and syncs.
+- Bodyweight changes auto-sync with a short debounce.
+- Completed workouts still save locally first, then auto-sync to Supabase.
+- Manual Sync now and Restore / merge cloud remain available.
+- Cloud backup remains local-first in the gym; no live workout logging depends on Supabase.
+
 # STRATA v1.5.2 — Muscle Stimulus Map
 
 Adds a post-workout **Muscle Stimulus Map** so each muscle shows volume, average RPE/intensity and rep-range distribution in one visual block.

@@ -1,7 +1,12 @@
-const APP_VERSION = "STRATA v1.5.2";
+const APP_VERSION = "STRATA v1.5.3";
 const STORE_KEY = "strata:personal:v1";
 const MEDIA_DB_NAME = "strata-personal-media-v1";
 const MEDIA_STORE = "photos";
+const DEFAULT_SUPABASE_URL = "https://yifjzpbmftaocanmayyc.supabase.co";
+const DEFAULT_SUPABASE_KEY = "sb_publishable_fmtBHOcbDr2Xs2_l1Fnh8w_H74_QLhV";
+const CLOUD_TABLE = "strata_cloud_backups";
+let cloudSyncTimer = null;
+let cloudBootstrapped = false;
 
 const PROGRAM = {
   upper: {
@@ -232,11 +237,13 @@ function defaultState() {
       effortScale: "rpe",
       lastBackupAt: null,
       cloud: {
-        url: "",
-        anonKey: "",
+        url: DEFAULT_SUPABASE_URL,
+        anonKey: DEFAULT_SUPABASE_KEY,
         userEmail: "",
         lastSyncAt: null,
-        lastRestoreAt: null
+        lastRestoreAt: null,
+        autoSync: true,
+        lastCloudStatus: "Not signed in"
       }
     },
     weights: [],
@@ -282,6 +289,9 @@ function normalizeExistingData() {
   state.photoSets = Array.isArray(state.photoSets) ? state.photoSets : [];
   state.settings.workoutLayouts = state.settings.workoutLayouts || {};
   state.settings.cloud = { ...defaultState().settings.cloud, ...(state.settings.cloud || {}) };
+  if (!state.settings.cloud.url) state.settings.cloud.url = DEFAULT_SUPABASE_URL;
+  if (!state.settings.cloud.anonKey) state.settings.cloud.anonKey = DEFAULT_SUPABASE_KEY;
+  if (state.settings.cloud.autoSync === undefined) state.settings.cloud.autoSync = true;
   state.sessions = Array.isArray(state.sessions) ? state.sessions : [];
   const sessions = [...state.sessions, ...(state.activeSession ? [state.activeSession] : [])];
   sessions.forEach((session) => {
@@ -1241,6 +1251,7 @@ function renderToday() {
   const activeWorkout = state.activeSession ? PROGRAM[state.activeSession.workoutId] : null;
 
   view.innerHTML = `
+    ${renderCloudMiniStatus()}
     ${activeWorkout ? `
       <section class="card active-session-card">
         <p class="label">Workout in progress</p>
@@ -2633,6 +2644,7 @@ function saveWeight(date, weight) {
   }
   saveState();
   showNotice("Weight saved.", "good");
+  queueCloudBackup();
   render();
 }
 
@@ -2881,6 +2893,18 @@ function releaseObjectUrls() {
   previewObjectUrls.clear();
 }
 
+function renderCloudMiniStatus() {
+  const cloud = getSupabaseSettings();
+  const signedIn = Boolean(supabaseUser);
+  const last = cloud.lastSyncAt ? `Last sync: ${niceDateTime(cloud.lastSyncAt)}` : "Not synced yet";
+  return `<section class="card cloud-mini-card ${signedIn ? "is-signed-in" : "is-signed-out"}">
+    <p class="label">Cloud backup</p>
+    <h3>${signedIn ? "Signed in" : "Sign in once on this device"}</h3>
+    <p class="muted">${signedIn ? `Backing up as ${escapeHtml(supabaseUser.email || cloud.userEmail || "your account")}. ${last}` : "Your Supabase project is already built into this app. Sign in on this device to enable automatic backup."}</p>
+    <button class="${signedIn ? "secondary" : "primary"}" data-route-jump="history" type="button">${signedIn ? "Backup settings" : "Sign in / restore"}</button>
+  </section>`;
+}
+
 async function updateStorageSummary() {
   const target = view.querySelector("#storage-summary");
   if (!target) return;
@@ -3078,6 +3102,7 @@ function attachCommonHandlers() {
   view.querySelectorAll("[data-action='delete-weight']").forEach((button) => button.addEventListener("click", () => {
     state.weights = state.weights.filter((entry) => entry.date !== button.dataset.date);
     saveState();
+    queueCloudBackup();
     renderBody();
   }));
   view.querySelectorAll("[data-action='delete-photos']").forEach((button) => button.addEventListener("click", async () => {
@@ -3102,44 +3127,57 @@ function attachCommonHandlers() {
 
 function renderCloudBackupCard() {
   const cloud = { ...defaultState().settings.cloud, ...(state.settings.cloud || {}) };
-  const configured = Boolean(cloud.url && cloud.anonKey);
-  const sessionText = supabaseUser?.email || cloud.userEmail || "Not signed in";
+  const configured = Boolean(getSupabaseSettings().url && getSupabaseSettings().anonKey);
+  const signedIn = Boolean(supabaseUser);
+  const sessionText = signedIn ? (supabaseUser.email || cloud.userEmail || "Signed in") : "Not signed in on this device";
   const unsynced = countUnsyncedSessions();
   return `
     <section class="card cloud-backup-card">
-      <p class="label">Cloud backup</p>
-      <h3>Supabase workout backup</h3>
-      <p class="muted">Local-first. STRATA still saves instantly on this device during training, then backs up completed workouts to Supabase when you sync.</p>
-      <form data-form="cloud-config" class="cloud-config-form">
-        <label class="field"><span>Supabase project URL</span><input name="url" type="url" autocomplete="off" placeholder="https://xxxx.supabase.co" value="${escapeHtml(cloud.url)}" /></label>
-        <label class="field"><span>Supabase anon key</span><input name="anonKey" type="password" autocomplete="off" placeholder="eyJ..." value="${escapeHtml(cloud.anonKey)}" /></label>
-        <button class="secondary" type="submit">Save Supabase settings</button>
-      </form>
-      <form data-form="cloud-auth" class="cloud-auth-form">
-        <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" value="${escapeHtml(cloud.userEmail)}" /></label>
-        <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" /></label>
-        <div class="button-row">
-          <button class="primary" type="submit" ${configured ? "" : "disabled"}>Sign in</button>
-          <button class="secondary" data-action="cloud-signup" type="button" ${configured ? "" : "disabled"}>Create account</button>
-          <button class="ghost" data-action="cloud-logout" type="button" ${supabaseUser ? "" : "disabled"}>Sign out</button>
-        </div>
-      </form>
+      <p class="label">Backup & sync</p>
+      <h3>${signedIn ? "Automatic cloud backup is on" : "Sign in to STRATA"}</h3>
+      <p class="muted">Your Supabase project is built into this app now. Sign in once per device; STRATA will then restore your cloud backup, save locally in the gym, and auto-sync completed workouts and bodyweight changes.</p>
       <div class="cloud-status-grid">
         <div><span>Status</span><strong>${escapeHtml(sessionText)}</strong></div>
         <div><span>Unsynced workouts</span><strong>${unsynced}</strong></div>
         <div><span>Last sync</span><strong>${niceDateTime(cloud.lastSyncAt)}</strong></div>
         <div><span>Last restore</span><strong>${niceDateTime(cloud.lastRestoreAt)}</strong></div>
       </div>
-      <div class="button-row">
-        <button class="secondary" data-action="cloud-sync" type="button" ${configured ? "" : "disabled"}>Sync now</button>
-        <button class="ghost" data-action="cloud-restore" type="button" ${configured ? "" : "disabled"}>Restore from cloud</button>
-      </div>
-      <p class="muted">This backs up workouts, weights, routines and settings. Progress-photo files stay local for now.</p>
+      ${signedIn ? `
+        <div class="cloud-account-card">
+          <p class="muted">Signed in as <strong>${escapeHtml(sessionText)}</strong>. Auto-sync is ${cloud.autoSync === false ? "off" : "on"}.</p>
+          <div class="button-row">
+            <button class="primary" data-action="cloud-sync" type="button">Sync now</button>
+            <button class="secondary" data-action="cloud-restore" type="button">Restore / merge cloud</button>
+            <button class="ghost" data-action="cloud-logout" type="button">Sign out</button>
+          </div>
+        </div>
+      ` : `
+        <form data-form="cloud-auth" class="cloud-auth-form">
+          <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" value="${escapeHtml(cloud.userEmail)}" required /></label>
+          <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required /></label>
+          <div class="button-row">
+            <button class="primary" type="submit" ${configured ? "" : "disabled"}>Sign in</button>
+            <button class="secondary" data-action="cloud-signup" type="button" ${configured ? "" : "disabled"}>Create account</button>
+          </div>
+        </form>
+      `}
+      <details class="cloud-advanced">
+        <summary>Advanced Supabase settings</summary>
+        <form data-form="cloud-config" class="cloud-config-form">
+          <label class="field"><span>Supabase project URL</span><input name="url" type="url" autocomplete="off" value="${escapeHtml(cloud.url || DEFAULT_SUPABASE_URL)}" /></label>
+          <label class="field"><span>Supabase publishable key</span><input name="anonKey" type="password" autocomplete="off" value="${escapeHtml(cloud.anonKey || DEFAULT_SUPABASE_KEY)}" /></label>
+          <button class="secondary" type="submit">Save advanced settings</button>
+        </form>
+      </details>
+      <p class="muted">Cloud backup currently includes workouts, weights, routines and settings. Progress-photo files stay local for now.</p>
     </section>`;
 }
 
 function getSupabaseSettings() {
   state.settings.cloud = { ...defaultState().settings.cloud, ...(state.settings.cloud || {}) };
+  if (!state.settings.cloud.url) state.settings.cloud.url = DEFAULT_SUPABASE_URL;
+  if (!state.settings.cloud.anonKey) state.settings.cloud.anonKey = DEFAULT_SUPABASE_KEY;
+  if (state.settings.cloud.autoSync === undefined) state.settings.cloud.autoSync = true;
   return state.settings.cloud;
 }
 
@@ -3205,8 +3243,9 @@ async function handleCloudSignIn(event) {
     const { data, error } = await client.auth.signInWithPassword({ email, password });
     if (error) throw error;
     supabaseUser = data?.user || null;
-    showNotice("Signed in to Supabase.", "good");
+    showNotice("Signed in. Restoring and syncing your backup…", "good");
   });
+  await bootstrapCloudSync({ reason: "signin" });
   if (route === "history") renderHistory();
 }
 
@@ -3222,8 +3261,9 @@ async function handleCloudSignUp() {
     const { data, error } = await client.auth.signUp({ email, password });
     if (error) throw error;
     supabaseUser = data?.user || null;
-    showNotice(data?.user ? "Account created and signed in." : "Account created. Check your email if confirmation is required.", "good", 6500);
+    showNotice(data?.user ? "Account created. Setting up cloud backup…" : "Account created. Check your email if confirmation is required.", "good", 6500);
   });
+  if (supabaseUser) await bootstrapCloudSync({ reason: "signup" });
   if (route === "history") renderHistory();
 }
 
@@ -3275,19 +3315,60 @@ function cloudBackupSummary(safeState) {
   };
 }
 
-async function syncCloudBackup({ manual = false } = {}) {
-  if (!getSupabaseSettings().url || !getSupabaseSettings().anonKey) {
-    if (manual) showNotice("Add your Supabase URL and anon key first.", "warn");
+function localHasMeaningfulData() {
+  return Boolean((state.sessions || []).length || (state.weights || []).length || Object.keys(state.settings?.workoutLayouts || {}).length || (state.settings?.customExercises || []).length);
+}
+
+async function fetchCloudBackup(client, user) {
+  const { data, error } = await client
+    .from(CLOUD_TABLE)
+    .select("backup_data, updated_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function bootstrapCloudSync({ reason = "auto" } = {}) {
+  const cloud = getSupabaseSettings();
+  if (!cloud.url || !cloud.anonKey || cloudBootstrapped) return false;
+  const user = supabaseUser || await refreshSupabaseUser();
+  if (!user) return false;
+  cloudBootstrapped = true;
+  await runCloudTask(reason === "auto" ? "Checking cloud backup…" : "Preparing cloud backup…", async () => {
+    const client = getSupabaseClient();
+    const remote = await fetchCloudBackup(client, user);
+    if (remote?.backup_data?.sessions) {
+      mergeCloudState(remote.backup_data);
+      state.settings.cloud.lastRestoreAt = new Date().toISOString();
+      state.settings.cloud.lastSyncAt = remote.updated_at || state.settings.cloud.lastSyncAt;
+      state.settings.cloud.userEmail = user.email || state.settings.cloud.userEmail;
+      saveState();
+    }
+  });
+  await syncCloudBackup({ manual: false, quiet: true });
+  if (route === "history") renderHistory();
+  return true;
+}
+
+async function syncCloudBackup({ manual = false, quiet = false } = {}) {
+  const cloud = getSupabaseSettings();
+  if (!cloud.url || !cloud.anonKey) {
+    if (manual) showNotice("Cloud backup is not configured.", "warn");
     return false;
   }
-  await runCloudTask(manual ? "Syncing STRATA backup…" : "Workout saved locally. Syncing cloud backup…", async () => {
+  if (manual || !quiet) showNotice(manual ? "Syncing STRATA backup…" : "Saving cloud backup…", "info", manual ? 0 : 2200);
+  try {
     const client = getSupabaseClient();
     let user = supabaseUser || await refreshSupabaseUser();
-    if (!user) throw new Error("Sign in before syncing.");
+    if (!user) {
+      if (manual) showNotice("Sign in before syncing.", "warn");
+      return false;
+    }
     const backupState = cloudSafeState();
     const now = new Date().toISOString();
     const { error } = await client
-      .from("strata_cloud_backups")
+      .from(CLOUD_TABLE)
       .upsert({
         user_id: user.id,
         backup_data: backupState,
@@ -3296,32 +3377,40 @@ async function syncCloudBackup({ manual = false } = {}) {
       }, { onConflict: "user_id" });
     if (error) throw error;
     state.settings.cloud.lastSyncAt = now;
+    state.settings.cloud.lastCloudStatus = "Synced";
     state.settings.cloud.userEmail = user.email || state.settings.cloud.userEmail;
     state.sessions = (state.sessions || []).map((session) => ({ ...session, cloudSyncedAt: now, cloudSyncError: "" }));
     saveState();
-    showNotice("Cloud backup synced.", "good");
-  });
-  if (route === "history") renderHistory();
-  return true;
+    if (manual || !quiet) showNotice("Cloud backup synced.", "good");
+    if (route === "history") renderHistory();
+    return true;
+  } catch (error) {
+    console.error(error);
+    state.settings.cloud.lastCloudStatus = error.message || "Sync failed";
+    saveState();
+    showNotice(error.message || "Cloud sync failed. Local data is still saved.", manual ? "danger" : "warn", manual ? 0 : 6500);
+    return false;
+  }
 }
 
-function queueCloudBackup() {
-  if (!getSupabaseSettings().url || !getSupabaseSettings().anonKey) return;
-  window.setTimeout(() => syncCloudBackup({ manual: false }), 500);
+function queueCloudBackup({ delay = 1800 } = {}) {
+  const cloud = getSupabaseSettings();
+  if (!cloud.url || !cloud.anonKey || cloud.autoSync === false) return;
+  if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = window.setTimeout(() => {
+    cloudSyncTimer = null;
+    syncCloudBackup({ manual: false, quiet: true });
+  }, delay);
 }
+
 
 async function restoreFromCloud() {
-  if (!confirm("Restore workouts, weights and routine settings from Supabase onto this device? Local data will be merged; matching sessions will not be duplicated.")) return;
+  if (!confirm("Restore and merge workouts, weights and routine settings from Supabase onto this device? Matching sessions will not be duplicated.")) return;
   await runCloudTask("Restoring STRATA cloud backup…", async () => {
     const client = getSupabaseClient();
     const user = supabaseUser || await refreshSupabaseUser();
     if (!user) throw new Error("Sign in before restoring.");
-    const { data, error } = await client
-      .from("strata_cloud_backups")
-      .select("backup_data, updated_at")
-      .eq("user_id", user.id)
-      .single();
-    if (error) throw error;
+    const data = await fetchCloudBackup(client, user);
     const incoming = data?.backup_data;
     if (!incoming || !Array.isArray(incoming.sessions)) throw new Error("No valid STRATA backup found.");
     mergeCloudState(incoming);
@@ -3331,8 +3420,10 @@ async function restoreFromCloud() {
     saveState();
     showNotice("Cloud backup restored and merged.", "good");
   });
+  await syncCloudBackup({ manual: false, quiet: true });
   if (route === "history") renderHistory();
 }
+
 
 function mergeCloudState(incoming) {
   const byId = new Map((state.sessions || []).map((session) => [session.id, session]));
@@ -3914,6 +4005,7 @@ async function initializeApp() {
   syncShellMode();
   await refreshSupabaseUser();
   render();
+  if (supabaseUser) bootstrapCloudSync({ reason: "auto" }).then(() => render()).catch(() => {});
 }
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
