@@ -1,6 +1,21 @@
-# STRATA v1.4.6 — Bodybuilding Intelligence
+# STRATA v1.5.1 — Muscle Stimulus Map
+
+Adds a post-workout **Muscle Stimulus Map** so each muscle shows volume, average RPE/intensity and rep-range distribution in one visual block.
+
+- Rep ranges are represented as horizontal segments.
+- Segment colour reflects session intensity.
+- Each muscle gets a conclusion such as low-volume/high-intensity or strong stimulus.
+- Existing workout logging, photos, Body Strata and backup behaviour remain unchanged.
+
+# STRATA v1.4.9 — Muscle Stimulus Summary
 
 A mobile-first vanilla JavaScript PWA for the personal 3-Day Upper / Lower / rotating Strength programme.
+
+## v1.4.9 changes
+
+- Workout completion now includes a muscle stimulus summary per muscle.
+- Each muscle shows hard sets, volume, average RPE, intensity label and rep-range distribution.
+- Helps a bodybuilder see what was hit, how hard, and in which rep ranges at the end of the workout.
 
 ## v1.4.6 changes
 

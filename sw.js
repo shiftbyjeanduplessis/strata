@@ -1,4 +1,4 @@
-const CACHE = "strata-v1-4-6";
+const CACHE = "strata-v1-5-1";
 const ASSETS = [
   "./",
   "./index.html",

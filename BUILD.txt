@@ -1,5 +1,2 @@
-STRATA v1.4.6
-Routine reordering and substitution
-Exercise history and matched progression
-Weekly muscle workload
-Advanced completion report
+STRATA v1.5.1 — Muscle Stimulus Map
+Adds end-of-workout muscle map showing rep-range distribution and intensity in one coloured UI.

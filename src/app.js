@@ -1,4 +1,4 @@
-const APP_VERSION = "STRATA v1.4.6";
+const APP_VERSION = "STRATA v1.5.1";
 const STORE_KEY = "strata:personal:v1";
 const MEDIA_DB_NAME = "strata-personal-media-v1";
 const MEDIA_STORE = "photos";
@@ -494,7 +494,7 @@ function blueprintFromProgramExercise(exercise) {
     volumeMode: variant.volumeMode || "external",
     allowZeroWeight: Boolean(variant.allowZeroWeight),
     restSeconds: Number(exercise.restSeconds || defaultRestSeconds(exercise.type)),
-    plannedDrop: Boolean(exercise.drop)
+    plannedDrop: false
   };
 }
 
@@ -515,7 +515,7 @@ function blueprintFromCustomExercise(exercise) {
     volumeMode: volume.volumeMode || "external",
     allowZeroWeight: Boolean(volume.allowZeroWeight),
     restSeconds: Number(exercise.restSeconds || defaultRestSeconds(exercise.type)),
-    plannedDrop: Boolean(exercise.plannedDrop)
+    plannedDrop: false
   };
 }
 
@@ -608,7 +608,8 @@ function buildSessionLog(blueprint, bodyweight) {
     setType: "warmup",
     completed: false,
     previousWeight: previousWarmups?.[setIndex]?.weight ?? "",
-    previousReps: previousWarmups?.[setIndex]?.reps ?? ""
+    previousReps: previousWarmups?.[setIndex]?.reps ?? "",
+    drops: []
   }));
   const workingSets = Array.from({ length: Number(blueprint.sets || 3) }, (_, setIndex) => ({
     weight: previousWorking?.[setIndex]?.weight ?? "",
@@ -618,7 +619,8 @@ function buildSessionLog(blueprint, bodyweight) {
     setType: previousWorking?.[setIndex]?.setType || (setIndex === 0 && blueprint.type === "strength" ? "top" : "work"),
     completed: false,
     previousWeight: previousWorking?.[setIndex]?.weight ?? "",
-    previousReps: previousWorking?.[setIndex]?.reps ?? ""
+    previousReps: previousWorking?.[setIndex]?.reps ?? "",
+    drops: []
   }));
   return {
     exerciseId: blueprint.exerciseId,
@@ -636,17 +638,8 @@ function buildSessionLog(blueprint, bodyweight) {
     allowZeroWeight: Boolean(blueprint.allowZeroWeight),
     bodyweight: Number(bodyweight || 0),
     restSeconds: Number(blueprint.restSeconds || defaultRestSeconds(blueprint.type)),
-    plannedDrop: Boolean(blueprint.plannedDrop),
-    drop: blueprint.plannedDrop ? {
-      weight: previousLog?.drop?.weight ?? "",
-      reps: "",
-      rir: "",
-      rpe: "",
-      setType: "drop",
-      completed: false,
-      previousWeight: previousLog?.drop?.weight ?? "",
-      previousReps: previousLog?.drop?.reps ?? ""
-    } : null,
+    plannedDrop: false,
+    drop: null,
     feedback: { target: "", joints: "", execution: "" },
     setupNote: state.settings.exerciseSetup?.[blueprint.variantId || blueprint.exerciseId] || "",
     sets: [...warmupSets, ...workingSets]
@@ -674,12 +667,18 @@ function calcSetVolume(set, log) {
   return load * reps * Number(log.loadMultiplier || 1) * Number(log.repMultiplier || 1);
 }
 
+function dropSetsForLog(log) {
+  const attached = (log.sets || []).flatMap((set) => Array.isArray(set.drops) ? set.drops : []);
+  if (log.drop) attached.push(log.drop);
+  return attached;
+}
+
 function calcExerciseVolume(log) {
   const regular = (log.sets || [])
     .filter((set) => set.setType !== "warmup")
     .reduce((sum, set) => sum + calcSetVolume(set, log), 0);
-  const drop = log.drop ? calcSetVolume(log.drop, log) : 0;
-  return regular + drop;
+  const drops = dropSetsForLog(log).reduce((sum, drop) => sum + calcSetVolume(drop, log), 0);
+  return regular + drops;
 }
 
 function calcSessionVolume(session) {
@@ -692,13 +691,18 @@ function lastExerciseVolume(log, workoutId) {
 }
 
 function countPlannedSets(session) {
-  return (session.logs || []).reduce((sum, log) => sum + (log.sets?.length || 0) + (log.drop ? 1 : 0), 0);
+  return (session.logs || []).reduce((sum, log) => {
+    const setCount = log.sets?.length || 0;
+    const dropCount = dropSetsForLog(log).length;
+    return sum + setCount + dropCount;
+  }, 0);
 }
 
 function countCompletedSets(session) {
   return (session.logs || []).reduce((sum, log) => {
     const regular = (log.sets || []).filter((set) => set.completed).length;
-    return sum + regular + (log.drop?.completed ? 1 : 0);
+    const drops = dropSetsForLog(log).filter((drop) => drop.completed).length;
+    return sum + regular + drops;
   }, 0);
 }
 
@@ -733,12 +737,12 @@ function isHardSet(set) {
 }
 
 function countHardSets(session) {
-  return (session.logs || []).reduce((sum, log) => sum + (log.sets || []).filter(isHardSet).length + (log.drop?.completed ? 1 : 0), 0);
+  return (session.logs || []).reduce((sum, log) => sum + (log.sets || []).filter(isHardSet).length + dropSetsForLog(log).filter((drop) => drop.completed).length, 0);
 }
 
 function completedExercise(log) {
-  const planned = (log.sets?.length || 0) + (log.drop ? 1 : 0);
-  const done = (log.sets || []).filter((set) => set.completed).length + (log.drop?.completed ? 1 : 0);
+  const planned = (log.sets?.length || 0) + dropSetsForLog(log).length;
+  const done = (log.sets || []).filter((set) => set.completed).length + dropSetsForLog(log).filter((drop) => drop.completed).length;
   return planned > 0 && done >= planned;
 }
 
@@ -776,10 +780,57 @@ function matchedProgress(log, previousLog) {
   return { tone: "negative", label: `Below previous matched performance`, detail: `Review load, reps, RIR and recovery before changing the plan.` };
 }
 
+function repRangeBounds(text) {
+  const nums = String(text || "").match(/\d+/g)?.map(Number) || [];
+  if (!nums.length) return { min: null, max: null };
+  if (nums.length === 1) return { min: nums[0], max: nums[0] };
+  return { min: nums[0], max: nums[1] };
+}
+
+function workingSetsForProgression(log) {
+  return (log.sets || []).filter((set) => set.completed && !["warmup"].includes(set.setType));
+}
+
+function doubleProgressionSignal(log) {
+  const { max } = repRangeBounds(log.targetReps);
+  const sets = workingSetsForProgression(log).filter((set) => set.setType !== "drop");
+  if (!max || !sets.length) return { ready: false, label: "Progression check pending", detail: "Complete working sets to evaluate double progression." };
+  const targetSets = Number(log.targetSets || sets.length);
+  const completedBaseSets = sets.filter((set) => set.setType !== "drop");
+  const completeEnough = completedBaseSets.length >= targetSets;
+  const allAtTop = completeEnough && completedBaseSets.every((set) => Number(set.reps || 0) >= max);
+  if (allAtTop) {
+    return { ready: true, label: "Ready to progress next time", detail: `All ${completedBaseSets.length} work sets hit ${max}+ reps. Increase load about 5–10% and build back up.` };
+  }
+  const best = completedBaseSets.reduce((winner, set) => Math.max(winner, Number(set.reps || 0)), 0);
+  return { ready: false, label: "Stay at this load", detail: `Top target is ${max} reps across all work sets. Best set today: ${best || "—"}.` };
+}
+
+function previousWorkSetText(log) {
+  const previousLog = latestExerciseHistoryLog(log);
+  const work = (previousLog?.sets || []).filter((set) => set.setType !== "warmup");
+  if (!work.length) return "No previous work sets";
+  return work.map((set) => `${set.weight || "—"}×${set.reps || "—"}`).join(" · ");
+}
+
+function exerciseVolumeDeltaText(log, previousLog) {
+  const current = calcExerciseVolume(log);
+  const previous = previousLog ? calcExerciseVolume(previousLog) : 0;
+  const delta = current - previous;
+  return { current, previous, delta, text: `${kg(current)} kg vs ${previous ? `${kg(previous)} kg` : "baseline"} (${delta >= 0 ? "+" : ""}${kg(delta)} kg)` };
+}
+
+function alternativeOptionsForLog(log) {
+  const currentKey = exerciseIdentity(log);
+  const library = exerciseLibraryItems();
+  const sameExercise = library.filter((item) => item.exerciseId === log.exerciseId && exerciseIdentity(item) !== currentKey);
+  const sameMuscle = library.filter((item) => item.muscle === log.muscle && item.exerciseId !== log.exerciseId && exerciseIdentity(item) !== currentKey).slice(0, 4);
+  return [...sameExercise, ...sameMuscle].slice(0, 5);
+}
 
 function hardSetsForLog(log) {
   const sets = (log.sets || []).filter(isHardSet);
-  if (log.drop?.completed) sets.push(log.drop);
+  dropSetsForLog(log).forEach((drop) => { if (drop.completed) sets.push(drop); });
   return sets;
 }
 
@@ -958,6 +1009,91 @@ function sessionMuscleBreakdown(session) {
     map.set(muscle, (map.get(muscle) || 0) + hardSetsForLog(log).length);
   });
   return [...map.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function repRangeBucket(reps) {
+  const value = Number(reps || 0);
+  if (!value) return "No reps";
+  if (value <= 5) return "1–5";
+  if (value <= 8) return "6–8";
+  if (value <= 12) return "9–12";
+  if (value <= 15) return "13–15";
+  return "16+";
+}
+
+function intensityLabel(avgRpe) {
+  if (!Number.isFinite(avgRpe)) return "Effort missing";
+  if (avgRpe < 7) return "Low";
+  if (avgRpe < 8) return "Moderate";
+  if (avgRpe < 9) return "Hard";
+  return "Near limit";
+}
+
+function intensityTone(avgRpe) {
+  if (!Number.isFinite(avgRpe)) return "missing";
+  if (avgRpe < 7) return "low";
+  if (avgRpe < 8) return "moderate";
+  if (avgRpe < 9) return "hard";
+  return "near-limit";
+}
+
+function volumeLabel(sets) {
+  if (!sets) return "No volume";
+  if (sets <= 2) return "Low volume";
+  if (sets <= 5) return "Solid volume";
+  return "High volume";
+}
+
+function stimulusConclusion(item) {
+  if (!item.sets) return "No useful stimulus recorded";
+  if (item.sets <= 2 && item.avgRpe !== null && item.avgRpe >= 9) return "Low volume, very high intensity — still a hard stimulus.";
+  if (item.sets <= 2) return "Low volume — check whether this was enough stimulus.";
+  if (item.sets >= 3 && item.avgRpe !== null && item.avgRpe >= 8.5) return "Strong stimulus — volume and intensity both count.";
+  if (item.avgRpe !== null && item.avgRpe < 7) return "Volume logged, but intensity was light.";
+  return "Useful stimulus recorded.";
+}
+
+function stimulusSegmentTone(avgRpe, range) {
+  const tone = intensityTone(avgRpe);
+  return `stimulus-${tone}`;
+}
+
+function sessionMuscleStimulusSummary(session) {
+  const map = new Map();
+  (session.logs || []).forEach((log) => {
+    const muscle = log.muscle || "Other";
+    const item = map.get(muscle) || { muscle, sets: 0, volume: 0, reps: [], rpes: [], ranges: new Map() };
+    hardSetsForLog(log).forEach((set) => {
+      item.sets += 1;
+      item.volume += calcSetVolume(set, log);
+      const reps = Number(set.reps || 0);
+      if (reps) item.reps.push(reps);
+      const rpe = setRpeValue(set);
+      if (Number.isFinite(rpe)) item.rpes.push(rpe);
+      const bucket = repRangeBucket(reps);
+      item.ranges.set(bucket, (item.ranges.get(bucket) || 0) + 1);
+    });
+    map.set(muscle, item);
+  });
+  return [...map.values()]
+    .filter((item) => item.sets > 0)
+    .map((item) => {
+      const avgRpe = item.rpes.length ? item.rpes.reduce((sum, value) => sum + value, 0) / item.rpes.length : null;
+      const avgReps = item.reps.length ? item.reps.reduce((sum, value) => sum + value, 0) / item.reps.length : null;
+      const ranges = [...item.ranges.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      const primaryRange = ranges[0]?.[0] || "—";
+      return {
+        ...item,
+        avgRpe,
+        avgReps,
+        ranges,
+        primaryRange,
+        intensity: intensityLabel(avgRpe),
+        intensityTone: intensityTone(avgRpe),
+        volumeLabel: volumeLabel(item.sets)
+      };
+    })
+    .sort((a, b) => b.sets - a.sets || b.volume - a.volume || a.muscle.localeCompare(b.muscle));
 }
 
 function currentWeekStartISO() {
@@ -1314,9 +1450,27 @@ function renderActiveSession() {
       </div>
     </header>
 
-    <section id="active-log" class="active-workout-log">
-      ${session.logs.map((log, index) => exerciseLogCard(log, index, session.workoutId)).join("")}
+    <section class="workout-focus-bar" aria-label="Current workout focus">
+      <div>
+        <span>FOCUS MODE</span>
+        <strong>${activeIndex + 1}/${session.logs.length} · ${session.logs[activeIndex]?.name || "Exercise"}</strong>
+      </div>
+      <div class="focus-bar-actions">
+        <button data-action="jump-exercise" data-dir="-1" type="button" ${activeIndex === 0 ? "disabled" : ""}>Prev</button>
+        <button data-action="jump-exercise" data-dir="1" type="button" ${activeIndex === session.logs.length - 1 ? "disabled" : ""}>Next</button>
+      </div>
     </section>
+
+    <section id="active-log" class="active-workout-log focus-only">
+      ${exerciseLogCard(session.logs[activeIndex], activeIndex, session.workoutId)}
+    </section>
+
+    <details class="exercise-queue-panel">
+      <summary><span>Workout queue</span><strong>${completed}/${planned} sets logged</strong></summary>
+      <div class="exercise-queue-list">
+        ${session.logs.map((log, index) => `<button class="queue-item ${index === activeIndex ? "active" : ""}" data-action="open-exercise" data-ex="${index}" type="button"><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(log.name)}</strong><small>${countCompletedSets({ logs: [log] })}/${countPlannedSets({ logs: [log] })} sets</small></button>`).join("")}
+      </div>
+    </details>
 
     <section class="add-exercise-panel">
       <button class="add-exercise-button" data-action="add-exercise" type="button"><span>＋</span><strong>Add another exercise</strong><small>Add it to this workout and keep it for next time.</small></button>
@@ -1366,7 +1520,8 @@ function exerciseLogCard(log, index, workoutId) {
           <span class="exercise-number">${String(index + 1).padStart(2, "0")}</span>
           <div>
             <h3>${log.name}</h3>
-            <p>${log.muscle} · ${(log.sets || []).filter((set) => set.setType === "warmup").length} warm-up · ${(log.sets || []).filter((set) => set.setType !== "warmup").length}${log.drop ? "+1" : ""} work · ${log.targetReps} · ${restSecondsForExercise(workoutId, index)}s rest</p>
+            <p>${log.muscle} · ${(log.sets || []).filter((set) => set.setType === "warmup").length} warm-up · ${(log.sets || []).filter((set) => set.setType !== "warmup").length} work · ${dropSetsForLog(log).length} optional drop · ${log.targetReps} · ${restSecondsForExercise(workoutId, index)}s rest</p>
+            <small class="previous-workline">Last work: ${escapeHtml(previousWorkSetText(log))}</small>
           </div>
         </div>
         <div class="exercise-head-actions">
@@ -1379,6 +1534,9 @@ function exerciseLogCard(log, index, workoutId) {
       <div class="exercise-intelligence ${progression.tone}" data-exercise-intelligence="${index}">
         <strong>${progression.label}</strong><span>${progression.detail}</span>
       </div>
+      ${(() => { const signal = doubleProgressionSignal(log); return `<div class="double-progression ${signal.ready ? "ready" : "hold"}"><strong>${escapeHtml(signal.label)}</strong><span>${escapeHtml(signal.detail)}</span></div>`; })()}
+      ${currentSetCueMarkup(log)}
+      ${(() => { const alternatives = alternativeOptionsForLog(log); return alternatives.length ? `<div class="alternative-strip"><span>Swap:</span>${alternatives.map((item) => `<button data-action="quick-swap-exercise" data-ex="${index}" data-alt="${escapeHtml(exerciseIdentity(item))}" type="button">${escapeHtml(item.name)}</button>`).join("")}</div>` : ""; })()}
       <details class="exercise-setup" ${log.setupNote ? "" : ""}>
         <summary><span>SETUP / CUE</span><strong>${escapeHtml(log.setupNote || "Add machine, seat, grip or execution cue")}</strong></summary>
         <textarea data-setup-note data-ex="${index}" placeholder="Example: Seat 3 · neutral grip · scapula fixed · drive elbows inward">${escapeHtml(log.setupNote || "")}</textarea>
@@ -1386,7 +1544,7 @@ function exerciseLogCard(log, index, workoutId) {
       <div class="set-table">
         <div class="set-table-head"><span>TYPE</span><span>PREVIOUS</span><span>KG</span><span>REPS</span><span>LOG</span></div>
         ${log.sets.map((set, setIndex) => setEntryMarkup(set, index, setIndex, log)).join("")}
-        ${log.drop ? dropSetMarkup(log.drop, index, log) : ""}
+        ${log.drop ? legacyDropSetMarkup(log.drop, index, log) : ""}
       </div>
       <footer class="exercise-footer">
         <div><span>Previous total</span><strong>${previous ? `${kg(previous)} kg` : "Baseline"}</strong></div>
@@ -1395,8 +1553,7 @@ function exerciseLogCard(log, index, workoutId) {
           <button class="exercise-add-set" data-action="remove-set" data-ex="${index}" type="button">− last</button>
           <button class="exercise-add-set warmup-control" data-action="add-warmup-set" data-ex="${index}" type="button">+ warm-up</button>
           <button class="exercise-add-set" data-action="add-set" data-ex="${index}" type="button">+ work</button>
-          <button class="exercise-add-set drop-control ${log.drop ? "has-drop" : ""}" data-action="${log.drop ? "remove-drop-set" : "add-drop-set"}" data-ex="${index}" type="button">${log.drop ? "− drop" : "+ drop set"}</button>
-          <button class="exercise-add-set substitute-control" data-action="replace-exercise" data-ex="${index}" type="button">↔ substitute</button>
+          <button class="exercise-add-set substitute-control" data-action="replace-exercise" data-ex="${index}" type="button">↔ more swaps</button>
           <button class="exercise-add-set danger-control" data-action="remove-exercise" data-ex="${index}" type="button">Remove exercise</button>
         </div>
       </footer>
@@ -1413,14 +1570,41 @@ function volumeRuleText(log) {
   return "Volume = load × reps for completed sets.";
 }
 
+function currentLogTarget(log) {
+  const sets = log?.sets || [];
+  for (let setIndex = 0; setIndex < sets.length; setIndex += 1) {
+    const set = sets[setIndex];
+    if (!set.completed) return { kind: "set", setIndex };
+    const dropIndex = (set.drops || []).findIndex((drop) => !drop.completed);
+    if (dropIndex >= 0) return { kind: "drop", setIndex, dropIndex };
+  }
+  if (log?.drop && !log.drop.completed) return { kind: "legacyDrop", setIndex: null, dropIndex: null };
+  return null;
+}
+
+function currentSetCueMarkup(log) {
+  const target = currentLogTarget(log);
+  if (!target) {
+    return `<section class="current-set-panel complete"><span>CURRENT FOCUS</span><strong>Exercise complete</strong><p>Review execution, add an optional drop if needed, or move to the next exercise.</p></section>`;
+  }
+  const set = target.kind === "set" ? log.sets[target.setIndex] : getDropTarget(log, target.setIndex, target.dropIndex);
+  const type = setTypeInfo(set?.setType || "work");
+  const previous = set?.previousWeight !== "" || set?.previousReps !== "" ? `${set.previousWeight || "—"} × ${set.previousReps || "—"}` : "No previous data";
+  const label = target.kind === "drop" ? `Optional drop after set ${target.setIndex + 1}` : `${type.label} ${target.setIndex + 1}`;
+  return `<section class="current-set-panel"><span>CURRENT SET</span><strong>${escapeHtml(label)}</strong><p>Previous: ${escapeHtml(previous)} · Target: ${escapeHtml(log.targetReps || "work range")}</p></section>`;
+}
+
 function setEntryMarkup(set, exerciseIndex, setIndex, log) {
   const completed = Boolean(set.completed);
   const type = setTypeInfo(set.setType);
   const previousText = set.previousWeight !== "" || set.previousReps !== ""
     ? `${set.previousWeight === "" ? "—" : set.previousWeight} × ${set.previousReps || "—"}`
     : "—";
+  const drops = Array.isArray(set.drops) ? set.drops : [];
+  const current = currentLogTarget(log);
+  const isCurrent = current?.kind === "set" && current.setIndex === setIndex;
   return `
-    <div class="set-row ${completed ? "is-complete" : ""}" data-set-entry data-ex="${exerciseIndex}" data-set="${setIndex}">
+    <div class="set-row ${completed ? "is-complete" : ""} ${isCurrent ? "current-set" : ""}" data-set-entry data-ex="${exerciseIndex}" data-set="${setIndex}">
       <button class="set-type type-${type.id}" data-action="cycle-set-type" data-ex="${exerciseIndex}" data-set="${setIndex}" title="${type.label}" type="button">${type.short}</button>
       <span class="set-last">${previousText}</span>
       <input aria-label="${log.loadLabel}" data-log="weight" data-ex="${exerciseIndex}" data-set="${setIndex}" type="number" inputmode="decimal" step="0.5" value="${set.weight ?? ""}">
@@ -1428,10 +1612,32 @@ function setEntryMarkup(set, exerciseIndex, setIndex, log) {
       <button class="set-check ${completed ? "complete" : ""}" data-action="${completed ? "edit-set" : "log-set"}" data-ex="${exerciseIndex}" data-set="${setIndex}" type="button" aria-label="${completed ? "Edit completed set" : "Log set"}">${completed ? "✓" : "○"}</button>
       ${effortChipsMarkup(set, exerciseIndex, setIndex, completed, false)}
     </div>
+    ${completed && set.setType !== "warmup" ? `<div class="drop-invite"><button data-action="add-drop-to-set" data-ex="${exerciseIndex}" data-set="${setIndex}" type="button">+ optional drop from set ${setIndex + 1}</button><span>extra work; does not replace the set</span></div>` : ""}
+    ${drops.map((drop, dropIndex) => dropSetMarkup(drop, exerciseIndex, setIndex, dropIndex, log)).join("")}
   `;
 }
 
-function dropSetMarkup(drop, exerciseIndex, log) {
+function dropSetMarkup(drop, exerciseIndex, setIndex, dropIndex, log) {
+  const completed = Boolean(drop.completed);
+  const previousText = drop.previousWeight !== "" || drop.previousReps !== ""
+    ? `${drop.previousWeight === "" ? "—" : drop.previousWeight} × ${drop.previousReps || "—"}`
+    : "—";
+  const current = currentLogTarget(log);
+  const isCurrent = current?.kind === "drop" && current.setIndex === setIndex && current.dropIndex === dropIndex;
+  return `
+    <div class="set-row drop-row ${completed ? "is-complete" : ""} ${isCurrent ? "current-set" : ""}" data-drop-entry data-ex="${exerciseIndex}" data-set="${setIndex}" data-drop-index="${dropIndex}">
+      <span class="set-type type-drop">D</span>
+      <span class="set-last">${previousText}</span>
+      <input aria-label="Drop ${log.loadLabel}" data-log="dropWeight" data-ex="${exerciseIndex}" data-set="${setIndex}" data-drop-index="${dropIndex}" type="number" inputmode="decimal" step="0.5" value="${drop.weight ?? ""}">
+      <input aria-label="Drop reps" data-log="dropReps" data-ex="${exerciseIndex}" data-set="${setIndex}" data-drop-index="${dropIndex}" type="number" inputmode="numeric" step="1" value="${drop.reps ?? ""}">
+      <button class="set-check ${completed ? "complete" : ""}" data-action="${completed ? "edit-drop" : "log-drop"}" data-ex="${exerciseIndex}" data-set="${setIndex}" data-drop-index="${dropIndex}" type="button" aria-label="${completed ? "Edit completed drop set" : "Log drop set"}">${completed ? "✓" : "○"}</button>
+      ${effortChipsMarkup(drop, exerciseIndex, setIndex, completed, true, dropIndex)}
+      <button class="drop-remove" data-action="remove-drop-from-set" data-ex="${exerciseIndex}" data-set="${setIndex}" data-drop-index="${dropIndex}" type="button" aria-label="Remove drop set">×</button>
+    </div>
+  `;
+}
+
+function legacyDropSetMarkup(drop, exerciseIndex, log) {
   const completed = Boolean(drop.completed);
   const previousText = drop.previousWeight !== "" || drop.previousReps !== ""
     ? `${drop.previousWeight === "" ? "—" : drop.previousWeight} × ${drop.previousReps || "—"}`
@@ -1448,7 +1654,7 @@ function dropSetMarkup(drop, exerciseIndex, log) {
   `;
 }
 
-function effortChipsMarkup(set, exerciseIndex, setIndex, visible, isDrop) {
+function effortChipsMarkup(set, exerciseIndex, setIndex, visible, isDrop, dropIndex = null) {
   if (set?.setType === "warmup") {
     return `<div class="warmup-logged ${visible ? "" : "hidden"}">Warm-up logged · excluded from work volume</div>`;
   }
@@ -1458,7 +1664,7 @@ function effortChipsMarkup(set, exerciseIndex, setIndex, visible, isDrop) {
   return `
     <div class="rir-strip ${visible ? "" : "hidden"}" data-rir-panel>
       <span>${scale.toUpperCase()}</span>
-      ${values.map((value) => `<button class="rir-chip ${selected === value ? "selected" : ""}" data-action="set-effort" data-ex="${exerciseIndex}" ${isDrop ? 'data-drop="true"' : `data-set="${setIndex}"`} data-scale="${scale}" data-value="${value}" type="button" aria-pressed="${selected === value}">${value}</button>`).join("")}
+      ${values.map((value) => `<button class="rir-chip ${selected === value ? "selected" : ""}" data-action="set-effort" data-ex="${exerciseIndex}" ${isDrop ? `data-drop="true" ${setIndex !== null ? `data-set="${setIndex}"` : ""} ${dropIndex !== null ? `data-drop-index="${dropIndex}"` : ""}` : `data-set="${setIndex}"`} data-scale="${scale}" data-value="${value}" type="button" aria-pressed="${selected === value}">${value}</button>`).join("")}
     </div>
   `;
 }
@@ -1488,12 +1694,18 @@ function setActiveExercise(index) {
   if (dockAdd) dockAdd.dataset.ex = String(state.activeSession.activeExerciseIndex);
 }
 
+function openExercise(index) {
+  if (!state.activeSession) return;
+  setActiveExercise(index);
+  renderActiveSession();
+  requestAnimationFrame(() => document.querySelector(`#exercise-${state.activeSession.activeExerciseIndex}`)?.scrollIntoView({ block: "start" }));
+}
+
 function jumpExercise(direction) {
   if (!state.activeSession) return;
   const current = Number(state.activeSession.activeExerciseIndex || 0);
   const next = Math.max(0, Math.min(state.activeSession.logs.length - 1, current + direction));
-  setActiveExercise(next);
-  document.querySelector(`#exercise-${next}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  openExercise(next);
 }
 
 function cycleSetType(exerciseIndex, setIndex, button) {
@@ -1563,6 +1775,56 @@ function suggestedDropWeight(log) {
   if (!working) return "";
   const raw = Number(working.weight) * 0.75;
   return String(Math.round(raw * 2) / 2);
+}
+
+function suggestedDropWeightFromSet(set) {
+  if (!set || !Number(set.weight || 0)) return "";
+  const raw = Number(set.weight) * 0.75;
+  return String(Math.round(raw * 2) / 2);
+}
+
+function addDropToSet(exerciseIndex, setIndex) {
+  const log = state.activeSession?.logs?.[exerciseIndex];
+  const set = log?.sets?.[setIndex];
+  if (!log || !set) return;
+  if (!set.completed || set.setType === "warmup") {
+    showNotice("Complete the work set first, then add the optional drop.", "warn");
+    return;
+  }
+  set.drops = Array.isArray(set.drops) ? set.drops : [];
+  const previous = previousSession(state.activeSession.workoutId, state.activeSession.id);
+  const previousLog = findPreviousLog(previous, log.exerciseId, log.variantId, log.name);
+  const previousDrop = previousLog?.sets?.[setIndex]?.drops?.[set.drops.length] || previousLog?.drop || {};
+  set.drops.push({
+    weight: previousDrop.weight ?? suggestedDropWeightFromSet(set) ?? suggestedDropWeight(log),
+    reps: "",
+    rir: "",
+    rpe: "",
+    setType: "drop",
+    completed: false,
+    previousWeight: previousDrop.weight ?? "",
+    previousReps: previousDrop.reps ?? ""
+  });
+  saveState();
+  renderActiveSession();
+  setActiveExercise(exerciseIndex);
+  requestAnimationFrame(() => {
+    const row = document.querySelector(`#exercise-${exerciseIndex} [data-drop-entry][data-set="${setIndex}"][data-drop-index="${set.drops.length - 1}"]`);
+    row?.scrollIntoView({ behavior: "smooth", block: "center" });
+    row?.querySelector('input[data-log="dropWeight"]')?.focus();
+  });
+  showNotice("Optional drop set added. It is extra work and does not replace the completed set.", "good");
+}
+
+function removeDropFromSet(exerciseIndex, setIndex, dropIndex) {
+  const log = state.activeSession?.logs?.[exerciseIndex];
+  const drops = log?.sets?.[setIndex]?.drops;
+  if (!Array.isArray(drops) || !drops[dropIndex]) return;
+  if (drops[dropIndex].completed && !confirm("Remove this completed optional drop set?")) return;
+  drops.splice(dropIndex, 1);
+  saveState();
+  renderActiveSession();
+  setActiveExercise(exerciseIndex);
 }
 
 function addDropSet(exerciseIndex) {
@@ -1645,20 +1907,29 @@ function updateActiveSessionField(event) {
   updateActiveSessionSummary(Number(input.dataset.ex));
 }
 
+function getDropTarget(log, setIndex, dropIndex) {
+  if (setIndex !== null && Number.isFinite(Number(setIndex))) {
+    return log?.sets?.[Number(setIndex)]?.drops?.[Number(dropIndex || 0)] || null;
+  }
+  return log?.drop || null;
+}
+
 function writeLogInputToState(input) {
   const exIndex = Number(input.dataset.ex);
   const setIndex = input.dataset.set !== undefined ? Number(input.dataset.set) : null;
+  const dropIndex = input.dataset.dropIndex !== undefined ? Number(input.dataset.dropIndex) : null;
   const field = input.dataset.log;
   const log = state.activeSession?.logs?.[exIndex];
   if (!log) return;
   if (["weight", "reps"].includes(field) && log.sets[setIndex]) log.sets[setIndex][field] = input.value;
-  if (field === "dropWeight" && log.drop) log.drop.weight = input.value;
-  if (field === "dropReps" && log.drop) log.drop.reps = input.value;
+  const drop = getDropTarget(log, setIndex, dropIndex);
+  if (field === "dropWeight" && drop) drop.weight = input.value;
+  if (field === "dropReps" && drop) drop.reps = input.value;
 }
 
-function commitSetInputs(exerciseIndex, setIndex, isDrop = false) {
+function commitSetInputs(exerciseIndex, setIndex, isDrop = false, dropIndex = null) {
   const selector = isDrop
-    ? `[data-drop-entry][data-ex="${exerciseIndex}"] input[data-log]`
+    ? (setIndex !== null ? `[data-drop-entry][data-ex="${exerciseIndex}"][data-set="${setIndex}"][data-drop-index="${dropIndex || 0}"] input[data-log]` : `[data-drop-entry][data-ex="${exerciseIndex}"] input[data-log]`)
     : `[data-set-entry][data-ex="${exerciseIndex}"][data-set="${setIndex}"] input[data-log]`;
   view.querySelectorAll(selector).forEach(writeLogInputToState);
 }
@@ -1686,11 +1957,11 @@ function validateSet(log, target) {
   return "";
 }
 
-function completeSet(exerciseIndex, setIndex, isDrop, button) {
+function completeSet(exerciseIndex, setIndex, isDrop, button, dropIndex = null) {
   const log = state.activeSession?.logs?.[exerciseIndex];
   if (!log) return;
-  commitSetInputs(exerciseIndex, setIndex, isDrop);
-  const target = isDrop ? log.drop : log.sets?.[setIndex];
+  commitSetInputs(exerciseIndex, setIndex, isDrop, dropIndex);
+  const target = isDrop ? getDropTarget(log, setIndex, dropIndex) : log.sets?.[setIndex];
   if (!target) return;
   const error = validateSet(log, target);
   if (error) {
@@ -1711,7 +1982,7 @@ function completeSet(exerciseIndex, setIndex, isDrop, button) {
   editButton.dataset.action = isDrop ? "edit-drop" : "edit-set";
   editButton.classList.add("complete");
   editButton.textContent = "✓";
-  editButton.addEventListener("click", () => editSet(exerciseIndex, setIndex, isDrop, editButton));
+  editButton.addEventListener("click", () => editSet(exerciseIndex, setIndex, isDrop, editButton, dropIndex));
   button.replaceWith(editButton);
 
   updateActiveSessionSummary(exerciseIndex);
@@ -1730,9 +2001,9 @@ function attachFeedbackHandlers(exerciseIndex) {
   view.querySelectorAll(`[data-feedback-panel="${exerciseIndex}"] [data-action="exercise-feedback"]`).forEach((button) => button.addEventListener("click", () => setExerciseFeedback(exerciseIndex, button.dataset.field, button.dataset.value, button)));
 }
 
-function editSet(exerciseIndex, setIndex, isDrop, button) {
+function editSet(exerciseIndex, setIndex, isDrop, button, dropIndex = null) {
   const log = state.activeSession?.logs?.[exerciseIndex];
-  const target = isDrop ? log?.drop : log?.sets?.[setIndex];
+  const target = isDrop ? getDropTarget(log, setIndex, dropIndex) : log?.sets?.[setIndex];
   if (!target) return;
   target.completed = false;
   target.rir = "";
@@ -1746,7 +2017,7 @@ function editSet(exerciseIndex, setIndex, isDrop, button) {
   logButton.dataset.action = isDrop ? "log-drop" : "log-set";
   logButton.classList.remove("complete");
   logButton.textContent = "○";
-  logButton.addEventListener("click", () => completeSet(exerciseIndex, setIndex, isDrop, logButton));
+  logButton.addEventListener("click", () => completeSet(exerciseIndex, setIndex, isDrop, logButton, dropIndex));
   button.replaceWith(logButton);
   updateActiveSessionSummary(exerciseIndex);
   if (!completedExercise(log)) {
@@ -1755,9 +2026,9 @@ function editSet(exerciseIndex, setIndex, isDrop, button) {
   }
 }
 
-function setEffort(exerciseIndex, setIndex, scale, value, isDrop, button) {
+function setEffort(exerciseIndex, setIndex, scale, value, isDrop, button, dropIndex = null) {
   const log = state.activeSession?.logs?.[exerciseIndex];
-  const target = isDrop ? log?.drop : log?.sets?.[setIndex];
+  const target = isDrop ? getDropTarget(log, setIndex, dropIndex) : log?.sets?.[setIndex];
   if (!target?.completed) return;
   if (scale === "rpe") {
     target.rpe = value;
@@ -2032,6 +2303,25 @@ function handleExerciseFormSubmit(event) {
   showNotice(exerciseDialogMode === "replace" ? `${name} substituted. Its history remains separate.` : `${name} added and saved to this workout.`, "good");
 }
 
+function quickSwapExercise(index, identity) {
+  if (!state.activeSession) return;
+  const current = state.activeSession.logs[index];
+  if (!current) return;
+  const completed = (current.sets || []).some((set) => set.completed) || dropSetsForLog(current).some((drop) => drop.completed);
+  const blueprint = findLibraryExercise(identity);
+  if (!blueprint) return;
+  if (completed && !confirm(`Swap ${current.name}? Completed sets for this exercise in the active workout will be removed.`)) return;
+  const log = buildSessionLog(blueprint, state.activeSession.bodyweight);
+  state.activeSession.logs.splice(index, 1, log);
+  state.activeSession.activeExerciseIndex = index;
+  saveActiveWorkoutLayout();
+  saveState();
+  renderActiveSession();
+  setActiveExercise(index);
+  requestAnimationFrame(() => document.querySelector(`#exercise-${index}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  showNotice(`${blueprint.name} swapped in. Its history is kept separate.`, "good");
+}
+
 function moveExercise(index, direction) {
   if (!state.activeSession) return;
   const next = index + direction;
@@ -2138,6 +2428,7 @@ function dismissRestTimer() {
   restTimerEndAt = 0;
   restTimer?.classList.add("hidden");
   document.body.classList.remove("rest-timer-active");
+  if (state.activeSession && route === "training") renderActiveSession();
 }
 
 restTimer?.querySelectorAll("[data-timer-adjust]").forEach((button) => {
@@ -2186,6 +2477,7 @@ function renderWorkoutComplete(session) {
   const best = sessionBestSet(session);
   const jointFlags = sessionJointFlags(session);
   const muscles = sessionMuscleBreakdown(session);
+  const muscleStimulus = sessionMuscleStimulusSummary(session);
   document.body.classList.remove("workout-mode");
   stopSessionClock();
   pageTitle.textContent = "Workout Complete";
@@ -2213,6 +2505,31 @@ function renderWorkoutComplete(session) {
       <header><span>MUSCLE WORKLOAD</span><strong>Direct completed hard sets</strong></header>
       <div>${muscles.map(([muscle, sets]) => `<span><b>${sets}</b>${escapeHtml(muscle)}</span>`).join("")}</div>
     </section>
+    <section class="completion-stimulus">
+      <header><span>MUSCLE STIMULUS MAP</span><strong>Rep range × intensity</strong></header>
+      <div class="stimulus-list stimulus-map-list">
+        ${muscleStimulus.map((item) => {
+          const totalRangeSets = item.ranges.reduce((sum, [, count]) => sum + count, 0) || item.sets || 1;
+          return `<article class="stimulus-card stimulus-card-${escapeHtml(item.intensityTone)}">
+            <div class="stimulus-card-head">
+              <div>
+                <h3>${escapeHtml(item.muscle)}</h3>
+                <p>${item.sets} hard set${item.sets === 1 ? "" : "s"} · ${kg(item.volume)} kg · ${escapeHtml(item.volumeLabel)}</p>
+              </div>
+              <strong>${item.avgRpe !== null ? `RPE ${item.avgRpe.toFixed(1)}` : "—"}</strong>
+            </div>
+            <div class="stimulus-matrix" aria-label="Rep range and intensity map for ${escapeHtml(item.muscle)}">
+              <div class="stimulus-axis"><span>Lower reps</span><span>Higher reps</span></div>
+              <div class="stimulus-track">
+                ${item.ranges.map(([range, count]) => `<span class="stimulus-segment stimulus-${escapeHtml(item.intensityTone)}" style="--w:${Math.max(10, Math.round((count / totalRangeSets) * 100))}%"><b>${count}</b><em>${escapeHtml(range)}</em></span>`).join("")}
+              </div>
+              <div class="stimulus-legend"><span>${escapeHtml(item.intensity)} intensity</span><span>${escapeHtml(item.primaryRange)} focus${item.avgReps !== null ? ` · ${item.avgReps.toFixed(1)} avg reps` : ""}</span></div>
+            </div>
+            <p class="stimulus-conclusion">${escapeHtml(stimulusConclusion(item))}</p>
+          </article>`;
+        }).join("") || `<p class="muted">No hard-set muscle stimulus recorded.</p>`}
+      </div>
+    </section>
     ${jointFlags.length ? `<section class="completion-joint-alert"><span>JOINT FLAGS</span><strong>${jointFlags.map((log) => `${escapeHtml(log.name)}: ${escapeHtml(log.feedback.joints)}`).join(" · ")}</strong></section>` : ""}
     <section class="completion-exercises">
       <header><span>EXERCISE READOUT</span><strong>Load, reps and effort compared like-for-like</strong></header>
@@ -2223,13 +2540,17 @@ function renderWorkoutComplete(session) {
         const bestSet = bestSetForLog(log);
         const exerciseDropoff = exerciseDropoffPercent(log);
         const avg = averageRpeForSets(hardSetsForLog(log));
-        return `<article class="completion-exercise ${result.tone}">
+        const volumeDelta = exerciseVolumeDeltaText(log, previousLog);
+        const dp = doubleProgressionSignal(log);
+        return `<article class="completion-exercise ${result.tone} ${dp.ready ? "ready-progress" : ""}">
           <div><h3>${escapeHtml(log.name)}</h3><p>${escapeHtml(result.label)}</p></div>
           <span>${escapeHtml(result.detail)}</span>
           <div class="completion-exercise-metrics">
+            <small>Volume: ${escapeHtml(volumeDelta.text)}</small>
             <small>Best: ${escapeHtml(formatSetResult(bestSet, log))}</small>
             <small>${hardSetsForLog(log).length} hard sets${avg !== null ? ` · RPE ${avg.toFixed(1)}` : ""}${exerciseDropoff !== null ? ` · ${exerciseDropoff.toFixed(0)}% drop-off` : ""}</small>
           </div>
+          <div class="progression-callout ${dp.ready ? "ready" : "hold"}"><strong>${escapeHtml(dp.label)}</strong><span>${escapeHtml(dp.detail)}</span></div>
           ${(feedback.target || feedback.joints || feedback.execution) ? `<small>Target: ${feedback.target || "—"} · Joints: ${feedback.joints || "—"} · Execution: ${feedback.execution || "—"}</small>` : ""}
         </article>`;
       }).join("")}
@@ -2683,9 +3004,13 @@ function attachCommonHandlers() {
   view.querySelectorAll("[data-route-jump]").forEach((button) => button.addEventListener("click", () => setRoute(button.dataset.routeJump)));
   view.querySelectorAll("[data-action='minimize-session']").forEach((button) => button.addEventListener("click", () => setRoute("today")));
   view.querySelectorAll("[data-action='jump-exercise']").forEach((button) => button.addEventListener("click", () => jumpExercise(Number(button.dataset.dir))));
+  view.querySelectorAll("[data-action='open-exercise']").forEach((button) => button.addEventListener("click", () => openExercise(Number(button.dataset.ex))));
   view.querySelectorAll("[data-action='add-set']").forEach((button) => button.addEventListener("click", () => addSet(Number(button.dataset.ex))));
   view.querySelectorAll("[data-action='add-drop-set']").forEach((button) => button.addEventListener("click", () => addDropSet(Number(button.dataset.ex))));
   view.querySelectorAll("[data-action='remove-drop-set']").forEach((button) => button.addEventListener("click", () => removeDropSet(Number(button.dataset.ex))));
+  view.querySelectorAll("[data-action='add-drop-to-set']").forEach((button) => button.addEventListener("click", () => addDropToSet(Number(button.dataset.ex), Number(button.dataset.set))));
+  view.querySelectorAll("[data-action='remove-drop-from-set']").forEach((button) => button.addEventListener("click", () => removeDropFromSet(Number(button.dataset.ex), Number(button.dataset.set), Number(button.dataset.dropIndex))));
+  view.querySelectorAll("[data-action='quick-swap-exercise']").forEach((button) => button.addEventListener("click", () => quickSwapExercise(Number(button.dataset.ex), button.dataset.alt)));
   view.querySelectorAll("[data-action='add-exercise']").forEach((button) => button.addEventListener("click", openAddExerciseDialog));
   view.querySelectorAll("[data-action='replace-exercise']").forEach((button) => button.addEventListener("click", () => openReplaceExerciseDialog(Number(button.dataset.ex))));
   view.querySelectorAll("[data-action='move-exercise']").forEach((button) => button.addEventListener("click", () => moveExercise(Number(button.dataset.ex), Number(button.dataset.dir))));
@@ -2721,11 +3046,11 @@ function attachCommonHandlers() {
     renderTraining();
   }));
   view.querySelectorAll("[data-action='log-set']").forEach((button) => button.addEventListener("click", () => completeSet(Number(button.dataset.ex), Number(button.dataset.set), false, button)));
-  view.querySelectorAll("[data-action='log-drop']").forEach((button) => button.addEventListener("click", () => completeSet(Number(button.dataset.ex), null, true, button)));
+  view.querySelectorAll("[data-action='log-drop']").forEach((button) => button.addEventListener("click", () => completeSet(Number(button.dataset.ex), button.dataset.set !== undefined ? Number(button.dataset.set) : null, true, button, button.dataset.dropIndex !== undefined ? Number(button.dataset.dropIndex) : null)));
   view.querySelectorAll("[data-action='edit-set']").forEach((button) => button.addEventListener("click", () => editSet(Number(button.dataset.ex), Number(button.dataset.set), false, button)));
-  view.querySelectorAll("[data-action='edit-drop']").forEach((button) => button.addEventListener("click", () => editSet(Number(button.dataset.ex), null, true, button)));
+  view.querySelectorAll("[data-action='edit-drop']").forEach((button) => button.addEventListener("click", () => editSet(Number(button.dataset.ex), button.dataset.set !== undefined ? Number(button.dataset.set) : null, true, button, button.dataset.dropIndex !== undefined ? Number(button.dataset.dropIndex) : null)));
   view.querySelectorAll("[data-action='set-effort']").forEach((button) => button.addEventListener("click", () => {
-    setEffort(Number(button.dataset.ex), button.dataset.set !== undefined ? Number(button.dataset.set) : null, button.dataset.scale, button.dataset.value, button.dataset.drop === "true", button);
+    setEffort(Number(button.dataset.ex), button.dataset.set !== undefined ? Number(button.dataset.set) : null, button.dataset.scale, button.dataset.value, button.dataset.drop === "true", button, button.dataset.dropIndex !== undefined ? Number(button.dataset.dropIndex) : null);
   }));
   view.querySelectorAll("[data-action='set-effort-scale']").forEach((button) => button.addEventListener("click", () => setEffortScale(button.dataset.scale)));
   view.querySelectorAll("[data-action='finish-session']").forEach((button) => button.addEventListener("click", finishSession));
@@ -2832,6 +3157,461 @@ function importData(event) {
 
 function escapeHtml(value) {
   return String(value || "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
+}
+
+
+
+/* =========================================================
+   STRATA v1.5.1 — Gym-door workout companion override
+   Scope: perfect the live workout from start → set → rest → finish.
+   Deep Body/Physique STRATA remains intentionally outside the gym flow.
+   ========================================================= */
+
+function renderActiveSession() {
+  const session = state.activeSession;
+  if (!session) return;
+  document.body.classList.add("workout-mode");
+  const workout = PROGRAM[session.workoutId] || { title: session.workoutId };
+  pageTitle.textContent = workout.title;
+  const prev = previousSession(session.workoutId, session.id);
+  const previousVolume = prev ? calcSessionVolume(prev) : 0;
+  const currentVolume = calcSessionVolume(session);
+  const delta = currentVolume - previousVolume;
+  const planned = countPlannedSets(session);
+  const completed = countCompletedSets(session);
+  const progress = planned ? Math.round((completed / planned) * 100) : 0;
+  const activeIndex = Math.max(0, Math.min(Number(session.activeExerciseIndex || 0), session.logs.length - 1));
+  session.activeExerciseIndex = activeIndex;
+
+  view.innerHTML = `
+    <header class="workout-command workout-command-compact">
+      <div class="workout-command-top">
+        <button class="workout-icon-button" data-action="minimize-session" type="button" aria-label="Minimize workout">⌄</button>
+        <div class="workout-title-block">
+          <span class="workout-kicker">GYM MODE</span>
+          <strong>${escapeHtml(workout.title || session.workoutId)}</strong>
+        </div>
+        <button class="workout-finish-button" data-action="finish-session" type="button">Finish</button>
+      </div>
+      <div class="workout-command-stats">
+        <span><b id="session-elapsed">${formatElapsed(session.startedAt)}</b><small>time</small></span>
+        <span><b><i id="completed-set-count">${completed}</i>/${planned}</b><small>sets</small></span>
+        <span><b id="session-current-volume">${kg(currentVolume)}</b><small>kg</small></span>
+        <span><b id="session-delta-volume" class="${delta >= 0 ? "positive" : "negative"}">${delta >= 0 ? "+" : ""}${kg(delta)}</b><small>last</small></span>
+      </div>
+      <div class="workout-progress"><span id="session-progress-bar" style="width:${progress}%"></span></div>
+    </header>
+
+    <section id="active-log" class="active-workout-log gym-focus-only">
+      ${gymDoorExerciseCard(session.logs[activeIndex], activeIndex, session.workoutId)}
+    </section>
+
+    <details class="exercise-queue-panel workout-queue-sheet">
+      <summary><span>Workout queue</span><strong>${activeIndex + 1}/${session.logs.length} · ${completed}/${planned} sets</strong></summary>
+      <div class="exercise-queue-list">
+        ${session.logs.map((log, index) => `<button class="queue-item ${index === activeIndex ? "active" : ""}" data-action="open-exercise" data-ex="${index}" type="button"><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(log.name)}</strong><small>${countCompletedSets({ logs: [log] })}/${countPlannedSets({ logs: [log] })}</small></button>`).join("")}
+      </div>
+      <div class="queue-admin-actions">
+        <button data-action="add-exercise" type="button">＋ Add exercise</button>
+        <button data-action="cancel-session" type="button">Discard workout</button>
+      </div>
+    </details>
+
+    <nav class="workout-dock workout-dock-minimal" aria-label="Workout controls">
+      <button data-action="jump-exercise" data-dir="-1" type="button" ${activeIndex === 0 ? "disabled" : ""}>← <span>Prev</span></button>
+      <div class="workout-dock-status"><strong id="dock-exercise-number">${activeIndex + 1}/${session.logs.length}</strong><span>exercise</span></div>
+      <button data-action="jump-exercise" data-dir="1" type="button" ${activeIndex === session.logs.length - 1 ? "disabled" : ""}><span>Next</span> →</button>
+    </nav>
+  `;
+  attachCommonHandlers();
+  view.querySelectorAll("input[data-log]").forEach((input) => {
+    input.addEventListener("change", updateActiveSessionField);
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") event.currentTarget.blur();
+    });
+  });
+  startSessionClock();
+}
+
+function gymDoorExerciseCard(log, index, workoutId) {
+  if (!log) return `<section class="gym-set-card"><h2>No exercise selected</h2></section>`;
+  const target = currentLogTarget(log);
+  const previousLog = latestExerciseHistoryLog(log);
+  const progression = matchedProgress(log, previousLog);
+  const dp = doubleProgressionSignal(log);
+  const current = calcExerciseVolume(log);
+  const previous = previousLog ? calcExerciseVolume(previousLog) : 0;
+  const delta = current - previous;
+  const allComplete = completedExercise(log);
+  const alternatives = alternativeOptionsForLog(log);
+  return `
+    <article class="gym-exercise-shell" data-exercise-index="${index}" id="exercise-${index}">
+      <header class="gym-exercise-head">
+        <div>
+          <span>Exercise ${index + 1} of ${state.activeSession.logs.length}</span>
+          <h2>${escapeHtml(log.name)}</h2>
+          <p>${escapeHtml(log.muscle || "Other")} · ${escapeHtml(log.targetReps || "work range")} · ${restSecondsForExercise(workoutId, index)}s rest</p>
+        </div>
+        <button class="gym-swap-button" data-action="replace-exercise" data-ex="${index}" type="button">Swap</button>
+      </header>
+
+      <section class="gym-previous-strip">
+        <div><span>Last work</span><strong>${escapeHtml(previousWorkSetText(log))}</strong></div>
+        <div><span>This exercise</span><strong class="${delta >= 0 ? "positive" : "negative"}">${current ? `${kg(current)} kg` : "—"}${previous ? ` · ${delta >= 0 ? "+" : ""}${kg(delta)}` : ""}</strong></div>
+      </section>
+
+      ${target ? gymCurrentSetMarkup(log, index, target) : gymExerciseCompleteMarkup(log, index, previousLog)}
+
+      <details class="gym-more-panel">
+        <summary><span>Exercise options</span><strong>swap, add sets, setup</strong></summary>
+        <div class="gym-option-grid">
+          <button data-action="add-warmup-set" data-ex="${index}" type="button">+ warm-up</button>
+          <button data-action="add-set" data-ex="${index}" type="button">+ work set</button>
+          <button data-action="exercise-history" data-ex="${index}" type="button">History</button>
+          <button data-action="move-exercise" data-dir="-1" data-ex="${index}" type="button" ${index === 0 ? "disabled" : ""}>Move up</button>
+          <button data-action="move-exercise" data-dir="1" data-ex="${index}" type="button" ${index === state.activeSession.logs.length - 1 ? "disabled" : ""}>Move down</button>
+          <button class="danger-text" data-action="remove-exercise" data-ex="${index}" type="button">Remove</button>
+        </div>
+        ${alternatives.length ? `<div class="gym-alt-list"><span>Quick swaps</span>${alternatives.map((item) => `<button data-action="quick-swap-exercise" data-ex="${index}" data-alt="${escapeHtml(exerciseIdentity(item))}" type="button">${escapeHtml(item.name)}</button>`).join("")}</div>` : ""}
+        <label class="gym-setup-note"><span>Setup / cue</span><textarea data-setup-note data-ex="${index}" placeholder="Seat, grip, stance, cue, machine pin…">${escapeHtml(log.setupNote || "")}</textarea></label>
+      </details>
+
+      <section class="gym-exercise-status ${progression.tone}">
+        <strong>${escapeHtml(progression.label)}</strong>
+        <span>${escapeHtml(progression.detail)}</span>
+      </section>
+      <section class="gym-double-status ${dp.ready ? "ready" : "hold"}">
+        <strong>${escapeHtml(dp.label)}</strong>
+        <span>${escapeHtml(dp.detail)}</span>
+      </section>
+    </article>`;
+}
+
+function gymCurrentSetMarkup(log, exerciseIndex, target) {
+  if (target.kind === "drop" || target.kind === "legacyDrop") {
+    const drop = getDropTarget(log, target.setIndex, target.dropIndex);
+    return gymSetModeCard(log, exerciseIndex, target.setIndex, drop, true, target.dropIndex);
+  }
+  return gymSetModeCard(log, exerciseIndex, target.setIndex, log.sets[target.setIndex], false, null);
+}
+
+function gymSetModeCard(log, exerciseIndex, setIndex, set, isDrop, dropIndex) {
+  const type = setTypeInfo(set?.setType || (isDrop ? "drop" : "work"));
+  const previousText = set?.previousWeight !== "" || set?.previousReps !== ""
+    ? `${set.previousWeight || "—"} × ${set.previousReps || "—"}`
+    : "No previous same set";
+  const targetText = nextSetTargetText(log, setIndex, set, isDrop);
+  const title = isDrop ? `Optional drop${setIndex !== null ? ` from set ${setIndex + 1}` : ""}` : `${type.label} ${setIndex + 1}`;
+  const weightField = isDrop ? "dropWeight" : "weight";
+  const repsField = isDrop ? "dropReps" : "reps";
+  return `
+    <section class="gym-set-card ${isDrop ? "drop-focus" : ""}">
+      <div class="gym-set-kicker">Current set</div>
+      <h3>${escapeHtml(title)}</h3>
+      <div class="gym-target-box">
+        <span>Previous</span>
+        <strong>${escapeHtml(previousText)}</strong>
+        <p>${escapeHtml(targetText)}</p>
+      </div>
+      <div class="gym-input-row ${isDrop ? "drop-row-inputs" : ""}" ${isDrop ? `data-drop-entry data-ex="${exerciseIndex}" ${setIndex !== null ? `data-set="${setIndex}"` : ""} ${dropIndex !== null ? `data-drop-index="${dropIndex}"` : ""}` : `data-set-entry data-ex="${exerciseIndex}" data-set="${setIndex}"`}>
+        <label><span>${escapeHtml(log.loadLabel || "kg")}</span><input aria-label="${escapeHtml(log.loadLabel || "kg")}" data-log="${weightField}" data-ex="${exerciseIndex}" ${setIndex !== null ? `data-set="${setIndex}"` : ""} ${dropIndex !== null ? `data-drop-index="${dropIndex}"` : ""} type="number" inputmode="decimal" step="0.5" value="${set?.weight ?? ""}"></label>
+        <label><span>Reps</span><input aria-label="Reps" data-log="${repsField}" data-ex="${exerciseIndex}" ${setIndex !== null ? `data-set="${setIndex}"` : ""} ${dropIndex !== null ? `data-drop-index="${dropIndex}"` : ""} type="number" inputmode="numeric" step="1" value="${set?.reps ?? ""}"></label>
+        <button class="gym-log-set" data-action="${isDrop ? "log-drop" : "log-set"}" data-ex="${exerciseIndex}" ${setIndex !== null ? `data-set="${setIndex}"` : ""} ${dropIndex !== null ? `data-drop-index="${dropIndex}"` : ""} type="button">Log set</button>
+      </div>
+      ${loggedSetSummary(log, exerciseIndex)}
+    </section>`;
+}
+
+function loggedSetSummary(log, exerciseIndex) {
+  const completed = [];
+  (log.sets || []).forEach((set, setIndex) => {
+    if (set.completed) completed.push({ set, setIndex, isDrop: false });
+    (set.drops || []).forEach((drop, dropIndex) => {
+      if (drop.completed) completed.push({ set: drop, setIndex, isDrop: true, dropIndex });
+    });
+  });
+  if (log.drop?.completed) completed.push({ set: log.drop, setIndex: null, isDrop: true, dropIndex: null });
+  if (!completed.length) return `<p class="gym-no-sets">No sets logged yet.</p>`;
+  return `<details class="gym-logged-sets"><summary>${completed.length} set${completed.length === 1 ? "" : "s"} logged</summary>${completed.map((item) => {
+    const type = setTypeInfo(item.set.setType || (item.isDrop ? "drop" : "work"));
+    return `<div><span>${type.short}</span><strong>${escapeHtml(formatSetResult(item.set, log))}</strong><button data-action="${item.isDrop ? "edit-drop" : "edit-set"}" data-ex="${exerciseIndex}" ${item.setIndex !== null ? `data-set="${item.setIndex}"` : ""} ${item.dropIndex !== undefined && item.dropIndex !== null ? `data-drop-index="${item.dropIndex}"` : ""} type="button">Edit</button></div>`;
+  }).join("")}</details>`;
+}
+
+function gymExerciseCompleteMarkup(log, exerciseIndex, previousLog) {
+  const dp = doubleProgressionSignal(log);
+  const work = workingSetsForProgression(log).filter((set) => set.setType !== "drop");
+  const previous = (previousLog?.sets || []).filter((set) => set.setType !== "warmup");
+  const lastWorkIndex = [...(log.sets || [])].map((set, i) => ({ set, i })).reverse().find((item) => item.set.completed && item.set.setType !== "warmup")?.i;
+  return `
+    <section class="gym-exercise-complete">
+      <span>Exercise complete</span>
+      <h3>${escapeHtml(log.name)}</h3>
+      <div class="gym-complete-comparison">
+        <div><span>Previous</span><strong>${previous.length ? previous.map((set) => `${set.weight || "—"}×${set.reps || "—"}`).join(" / ") : "Baseline"}</strong></div>
+        <div><span>Today</span><strong>${work.length ? work.map((set) => `${set.weight || "—"}×${set.reps || "—"}`).join(" / ") : "No work sets"}</strong></div>
+      </div>
+      <p class="gym-next-action ${dp.ready ? "ready" : "hold"}"><strong>${escapeHtml(dp.ready ? "Increase next time" : "Next target")}</strong>${escapeHtml(nextExerciseActionText(log))}</p>
+      <div class="gym-complete-actions">
+        ${lastWorkIndex !== undefined ? `<button data-action="add-drop-to-set" data-ex="${exerciseIndex}" data-set="${lastWorkIndex}" type="button">+ drop from last set</button>` : ""}
+        <button data-action="add-set" data-ex="${exerciseIndex}" type="button">+ extra set</button>
+        <button data-action="jump-exercise" data-dir="1" type="button" ${exerciseIndex === state.activeSession.logs.length - 1 ? "disabled" : ""}>Next exercise →</button>
+      </div>
+      ${exerciseFeedbackMarkup(log, exerciseIndex, true)}
+    </section>`;
+}
+
+function nextSetTargetText(log, setIndex, set, isDrop = false) {
+  if (!set) return "Log a clean set.";
+  if (isDrop) return "Drop set: reduce load, chase clean reps, and stop before form breaks.";
+  if (set.setType === "warmup") return "Warm-up only. Ramp smoothly; this will not count as a hard set.";
+  const { max } = repRangeBounds(log.targetReps);
+  if (previousSessionWasReadyToProgress(log)) return `Last session topped the range. Use a heavier load if it is available and aim for ${repRangeBounds(log.targetReps).min || 8}+ reps.`;
+  const pw = Number(set.previousWeight || 0);
+  const pr = Number(set.previousReps || 0);
+  if (!pw && !pr) return `Build a baseline in the ${log.targetReps || "target"} range.`;
+  if (max && pr >= max) return `You hit the top last time. Repeat ${max}+ here or push the remaining sets to the top.`;
+  if (pr) return `Beat last time: aim for ${pr + 1}+ reps at the same load, or match it with lower RPE.`;
+  return `Match the prescribed range: ${log.targetReps || "controlled work reps"}.`;
+}
+
+function previousSessionWasReadyToProgress(log) {
+  const previousLog = latestExerciseHistoryLog(log);
+  if (!previousLog) return false;
+  return Boolean(doubleProgressionSignal(previousLog).ready);
+}
+
+function nextExerciseActionText(log) {
+  const dp = doubleProgressionSignal(log);
+  const { max } = repRangeBounds(log.targetReps);
+  if (dp.ready) return ` — all work sets reached ${max || "the top"}. Increase load 5–10% next time and rebuild.`;
+  const work = workingSetsForProgression(log).filter((set) => set.setType !== "drop");
+  if (!work.length) return " — complete work sets next time.";
+  const lowest = Math.min(...work.map((set) => Number(set.reps || 0)));
+  if (max) return ` — hold the load until every work set reaches ${max}. Lowest set today: ${lowest}.`;
+  return " — repeat the load and beat total reps next time.";
+}
+
+
+function editSet(exerciseIndex, setIndex, isDrop, button, dropIndex = null) {
+  const log = state.activeSession?.logs?.[exerciseIndex];
+  const target = isDrop ? getDropTarget(log, setIndex, dropIndex) : log?.sets?.[setIndex];
+  if (!target) return;
+  target.completed = false;
+  target.rir = "";
+  target.rpe = "";
+  delete target.completedAt;
+  saveState();
+  renderActiveSession();
+  showNotice("Set reopened. Adjust it and log again.", "info");
+}
+
+function restContextAfterSet(log, exerciseIndex, setIndex, target, isDrop, dropIndex) {
+  const nextTarget = currentLogTarget(log);
+  const nextText = nextTarget
+    ? describeRestNextTarget(log, nextTarget)
+    : "Exercise complete. Choose a drop, add an extra set, or move on.";
+  return {
+    exerciseIndex,
+    setIndex,
+    dropIndex,
+    isDrop,
+    isWarmup: target?.setType === "warmup",
+    last: `${formatSetResult(target, log)}${target?.setType === "warmup" ? " · warm-up" : ""}`,
+    next: nextText
+  };
+}
+
+function describeRestNextTarget(log, target) {
+  if (target.kind === "drop") return `Next: optional drop after set ${target.setIndex + 1}. Suggested goal: clean reps after the load reduction.`;
+  if (target.kind === "legacyDrop") return "Next: optional drop set.";
+  const set = log.sets[target.setIndex];
+  const type = setTypeInfo(set?.setType || "work");
+  const label = set?.setType === "warmup" ? "warm-up" : `set ${target.setIndex + 1}`;
+  return `Next: ${type.label} ${label}. ${nextSetTargetText(log, target.setIndex, set, false)}`;
+}
+
+function completeSet(exerciseIndex, setIndex, isDrop, button, dropIndex = null) {
+  const log = state.activeSession?.logs?.[exerciseIndex];
+  if (!log) return;
+  commitSetInputs(exerciseIndex, setIndex, isDrop, dropIndex);
+  const target = isDrop ? getDropTarget(log, setIndex, dropIndex) : log.sets?.[setIndex];
+  if (!target) return;
+  const error = validateSet(log, target);
+  if (error) {
+    showNotice(error, "warn");
+    const entry = button.closest(isDrop ? "[data-drop-entry]" : "[data-set-entry]");
+    const firstEmpty = Array.from(entry?.querySelectorAll("input") || []).find((input) => !input.value);
+    firstEmpty?.focus();
+    return;
+  }
+  target.completed = true;
+  target.completedAt = new Date().toISOString();
+  saveState();
+  updateActiveSessionSummary(exerciseIndex);
+  const restSeconds = target.setType === "warmup"
+    ? Math.min(90, restSecondsForExercise(state.activeSession.workoutId, exerciseIndex))
+    : restSecondsForExercise(state.activeSession.workoutId, exerciseIndex);
+  const context = restContextAfterSet(log, exerciseIndex, setIndex, target, isDrop, dropIndex);
+  startRestTimer(restSeconds, log.name, context);
+}
+
+function startRestTimer(seconds, exerciseName, context = {}) {
+  prepareAudio();
+  clearInterval(restTimerInterval);
+  restTimerEndAt = Date.now() + seconds * 1000;
+  restTimer?.classList.remove("hidden");
+  document.body.classList.add("rest-timer-active");
+  const status = document.querySelector("#rest-timer-status");
+  const time = document.querySelector("#rest-timer-time");
+  const exercise = document.querySelector("#rest-timer-exercise");
+  const dismiss = document.querySelector("#rest-timer-dismiss");
+  if (status) status.textContent = "Resting";
+  if (exercise) exercise.textContent = exerciseName;
+  if (dismiss) dismiss.textContent = "Skip";
+  let details = document.querySelector("#rest-timer-details");
+  if (!details) {
+    details = document.createElement("div");
+    details.id = "rest-timer-details";
+    details.className = "rest-timer-details";
+    restTimer?.querySelector(".rest-timer-copy")?.appendChild(details);
+  }
+  details.innerHTML = `
+    ${context.last ? `<div class="rest-last"><span>Last set</span><strong>${escapeHtml(context.last)}</strong></div>` : ""}
+    ${context.next ? `<div class="rest-next"><span>Next</span><strong>${escapeHtml(context.next)}</strong></div>` : ""}
+    ${context.isWarmup ? "" : restEffortMarkup(context)}
+  `;
+  details.querySelectorAll("[data-rest-effort]").forEach((button) => button.addEventListener("click", () => {
+    setEffort(Number(button.dataset.ex), button.dataset.set !== undefined ? Number(button.dataset.set) : null, button.dataset.scale, button.dataset.value, button.dataset.drop === "true", button, button.dataset.dropIndex !== undefined ? Number(button.dataset.dropIndex) : null);
+    details.querySelectorAll("[data-rest-effort]").forEach((chip) => chip.classList.toggle("selected", chip === button));
+  }));
+  if (time) time.textContent = formatTimer(seconds);
+  updateRestTimerDisplay();
+  restTimerInterval = setInterval(updateRestTimerDisplay, 250);
+}
+
+function restEffortMarkup(context) {
+  const scale = state.settings.effortScale === "rir" ? "rir" : "rpe";
+  const values = scale === "rpe" ? ["6", "7", "8", "9", "10"] : ["0", "1", "2", "3", "4+"];
+  return `<div class="rest-effort"><span>${scale.toUpperCase()} for last set</span><div>${values.map((value) => `<button data-rest-effort data-action="set-effort" data-ex="${context.exerciseIndex}" ${context.setIndex !== null ? `data-set="${context.setIndex}"` : ""} ${context.dropIndex !== null && context.dropIndex !== undefined ? `data-drop-index="${context.dropIndex}"` : ""} ${context.isDrop ? `data-drop="true"` : ""} data-scale="${scale}" data-value="${value}" type="button">${value}</button>`).join("")}</div></div>`;
+}
+
+function dismissRestTimer() {
+  clearInterval(restTimerInterval);
+  restTimerInterval = null;
+  restTimerEndAt = 0;
+  restTimer?.classList.add("hidden");
+  document.body.classList.remove("rest-timer-active");
+  const details = document.querySelector("#rest-timer-details");
+  if (details) details.innerHTML = "";
+  if (state.activeSession && route === "training") renderActiveSession();
+}
+
+function finishSession() {
+  if (!state.activeSession) return;
+  commitAllActiveInputs();
+  const completed = countCompletedSets(state.activeSession);
+  const planned = countPlannedSets(state.activeSession);
+  if (!completed) {
+    showNotice("Log at least one completed set before finishing the workout.", "warn");
+    return;
+  }
+  if (completed < planned && !confirm(`${planned - completed} planned set${planned - completed === 1 ? " is" : "s are"} not logged. Finish anyway? Only completed sets will count.`)) return;
+  dismissRestTimer();
+  const finished = {
+    ...state.activeSession,
+    notes: state.activeSession.notes || "",
+    completedAt: new Date().toISOString()
+  };
+  const prev = previousSession(finished.workoutId, finished.id);
+  const prevVolume = prev ? calcSessionVolume(prev) : 0;
+  const currentVolume = calcSessionVolume(finished);
+  finished.previousVolume = prevVolume;
+  finished.deltaVolume = currentVolume - prevVolume;
+  finished.gymDoorActions = gymDoorActions(finished);
+  state.sessions.push(finished);
+  if (finished.workoutId.startsWith("strength")) state.settings.fridayRotationIndex = (state.settings.fridayRotationIndex + 1) % 3;
+  state.activeSession = null;
+  saveState();
+  syncShellMode();
+  renderWorkoutComplete(finished);
+}
+
+function gymDoorActions(session) {
+  return (session.logs || []).map((log) => {
+    const previousLog = exerciseHistoryEntries(log).find(({ session: item }) => item.id !== session.id && String(item.completedAt || "") < session.completedAt)?.log || null;
+    const dp = doubleProgressionSignal(log);
+    const progression = matchedProgress(log, previousLog);
+    return {
+      name: log.name,
+      tone: dp.ready ? "ready" : progression.tone,
+      action: dp.ready ? "Increase load next time" : nextExerciseActionText(log).replace(/^\s*—\s*/, ""),
+      detail: progression.label
+    };
+  });
+}
+
+function renderWorkoutComplete(session) {
+  const workout = PROGRAM[session.workoutId];
+  const volume = calcSessionVolume(session);
+  const delta = volume - (session.previousVolume || 0);
+  const durationMinutes = Math.max(1, Math.round((new Date(session.completedAt) - new Date(session.startedAt)) / 60000));
+  const counts = progressionCounts(session, session.completedAt);
+  const averageRpe = sessionAverageRpe(session);
+  const muscles = sessionMuscleStimulusSummary(session);
+  const actions = gymDoorActions(session);
+  document.body.classList.remove("workout-mode");
+  stopSessionClock();
+  pageTitle.textContent = "Workout Complete";
+  view.innerHTML = `
+    <section class="completion-hero gym-door-hero">
+      <span>GYM-DOOR REPORT</span>
+      <h2>${escapeHtml(workout?.title || session.workoutId)}</h2>
+      <div class="completion-primary"><strong>${durationMinutes}</strong><small>minutes</small></div>
+      <div class="completion-strip completion-strip-advanced">
+        <div><strong>${countHardSets(session)}</strong><span>hard sets</span></div>
+        <div><strong>${kg(volume)}</strong><span>kg volume</span></div>
+        <div><strong>${delta >= 0 ? "+" : ""}${kg(delta)}</strong><span>vs last</span></div>
+        <div><strong>${averageRpe !== null ? averageRpe.toFixed(1) : "—"}</strong><span>avg RPE</span></div>
+      </div>
+      <div class="completion-progress-counts">
+        <div class="positive"><strong>${counts.positive}</strong><span>progressed</span></div>
+        <div><strong>${counts.neutral}</strong><span>held</span></div>
+        <div class="negative"><strong>${counts.negative}</strong><span>down</span></div>
+        ${counts.baseline ? `<div><strong>${counts.baseline}</strong><span>baseline</span></div>` : `<div><strong>${actions.filter((a) => a.tone === "ready").length}</strong><span>load jumps</span></div>`}
+      </div>
+    </section>
+
+    <section class="gym-door-actions">
+      <header><span>Next time</span><strong>Do this when the exercise returns</strong></header>
+      ${actions.map((item) => `<article class="gym-action ${escapeHtml(item.tone)}"><h3>${escapeHtml(item.name)}</h3><strong>${escapeHtml(item.action)}</strong><p>${escapeHtml(item.detail)}</p></article>`).join("")}
+    </section>
+
+    <section class="completion-stimulus gym-door-stimulus">
+      <header><span>Muscles hit</span><strong>volume × intensity × rep range</strong></header>
+      <div class="stimulus-list stimulus-map-list">
+        ${muscles.map((item) => `<article class="stimulus-card stimulus-card-${escapeHtml(item.intensityTone)}">
+          <div class="stimulus-card-head"><div><h3>${escapeHtml(item.muscle)}</h3><p>${item.sets} hard set${item.sets === 1 ? "" : "s"} · ${escapeHtml(item.volumeLabel)}</p></div><strong>${item.avgRpe !== null ? `RPE ${item.avgRpe.toFixed(1)}` : "—"}</strong></div>
+          <div class="stimulus-matrix"><div class="stimulus-track">${item.ranges.map(([range, count]) => `<span class="stimulus-segment stimulus-${escapeHtml(item.intensityTone)}" style="--w:${Math.max(10, Math.round((count / Math.max(1, item.sets)) * 100))}%"><b>${count}</b><em>${escapeHtml(range)}</em></span>`).join("")}</div><div class="stimulus-legend"><span>${escapeHtml(item.intensity)} effort</span><span>${escapeHtml(item.primaryRange)} focus</span></div></div>
+          <p class="stimulus-conclusion">${escapeHtml(stimulusConclusion(item))}</p>
+        </article>`).join("") || `<p class="muted">No hard-set muscle stimulus recorded.</p>`}
+      </div>
+    </section>
+
+    <section class="completion-exercises gym-door-exercises">
+      <header><span>Exercise report</span><strong>Short, practical, same-workout comparison</strong></header>
+      ${session.logs.map((log) => {
+        const previousLog = exerciseHistoryEntries(log).find(({ session: item }) => item.id !== session.id && String(item.completedAt || "") < session.completedAt)?.log || null;
+        const result = matchedProgress(log, previousLog);
+        const volumeDelta = exerciseVolumeDeltaText(log, previousLog);
+        const dp = doubleProgressionSignal(log);
+        return `<article class="completion-exercise ${result.tone} ${dp.ready ? "ready-progress" : ""}"><div><h3>${escapeHtml(log.name)}</h3><p>${escapeHtml(result.label)}</p></div><span>${escapeHtml(volumeDelta.text)}</span><div class="progression-callout ${dp.ready ? "ready" : "hold"}"><strong>${escapeHtml(dp.label)}</strong><span>${escapeHtml(dp.detail)}</span></div></article>`;
+      }).join("")}
+    </section>
+
+    <button class="primary full" data-route-jump="today" type="button">Return to Today</button>
+  `;
+  view.querySelector("[data-route-jump]")?.addEventListener("click", () => setRoute("today"));
 }
 
 savedExerciseSelect?.addEventListener("change", () => fillExerciseFormFromSaved(savedExerciseSelect.value));
