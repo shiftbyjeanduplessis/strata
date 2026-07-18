@@ -1,4 +1,4 @@
-# STRATA v1.5.1 — Muscle Stimulus Map
+# STRATA v1.5.2 — Muscle Stimulus Map
 
 Adds a post-workout **Muscle Stimulus Map** so each muscle shows volume, average RPE/intensity and rep-range distribution in one visual block.
 
@@ -41,3 +41,8 @@ A mobile-first vanilla JavaScript PWA for the personal 3-Day Upper / Lower / rot
 ## Running locally
 
 Unzip into a new folder. Open `index.html` for basic use, or run `npm start` and visit http://localhost:4173. PWA installation and service-worker updates require localhost or HTTPS.
+
+
+## v1.5.2 Supabase backup
+
+This release adds optional Supabase cloud backup for completed workouts, weights, routine settings and local programme changes. It remains local-first in the gym: workouts save to the device immediately, then sync after completion or when using Sync now. Progress-photo files remain local for now. Run `SUPABASE_SETUP.sql` once in your Supabase SQL Editor before signing in.

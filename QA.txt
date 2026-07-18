@@ -1,1 +1,1 @@
-QA: JS syntax checked. Muscle stimulus map uses hard sets only, keeps warm-ups excluded, and preserves existing session calculations.
+Checked JavaScript syntax, file integrity, Supabase SQL setup file included. Runtime Supabase sync requires your project URL, anon key and SQL table.

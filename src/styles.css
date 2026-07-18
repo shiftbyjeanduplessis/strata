@@ -1524,3 +1524,45 @@ body.workout-mode .workout-dock { z-index: 20; }
   .gym-option-grid { grid-template-columns: 1fr; }
   .gym-input-row input { font-size: 1.35rem; }
 }
+
+/* STRATA v1.5.2 — Supabase cloud backup */
+.cloud-backup-card {
+  display: grid;
+  gap: 14px;
+}
+.cloud-backup-card h3 {
+  margin: -4px 0 0;
+  font-size: 1.05rem;
+}
+.cloud-config-form,
+.cloud-auth-form {
+  display: grid;
+  gap: 12px;
+}
+.cloud-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.cloud-status-grid > div {
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  border-radius: 16px;
+  padding: 12px;
+  display: grid;
+  gap: 4px;
+}
+.cloud-status-grid span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.cloud-status-grid strong {
+  color: var(--text);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+  .cloud-status-grid { grid-template-columns: 1fr; }
+}
