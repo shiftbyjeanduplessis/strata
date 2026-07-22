@@ -1,7 +1,8 @@
-const CACHE = "strata-v1-5-3";
+const CACHE = "strata-v1-5-11";
 const ASSETS = [
   "./",
   "./index.html",
+  "./desktop.html",
   "./src/styles.css",
   "./src/app.js",
   "./manifest.webmanifest",

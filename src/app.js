@@ -1,4 +1,4 @@
-const APP_VERSION = "STRATA v1.5.3";
+const APP_VERSION = "STRATA v1.5.11";
 const STORE_KEY = "strata:personal:v1";
 const MEDIA_DB_NAME = "strata-personal-media-v1";
 const MEDIA_STORE = "photos";
@@ -182,16 +182,28 @@ const PROGRAM = {
   }
 };
 
+
+PROGRAM.adhoc = {
+  id: "adhoc",
+  title: "Workout on the fly",
+  day: "Any time",
+  description: "Start blank, add exercises as you train, and save it as a separate session.",
+  exercises: []
+};
+
 const ROUTE_TITLES = {
   today: "Today",
   training: "Training Strata",
   body: "Body Strata",
   physique: "Physique Strata",
-  history: "History"
+  account: "Account"
 };
 
 let state = loadState();
-let route = "today";
+const APP_SHELL = document.body?.dataset?.shell || "mobile-app";
+const IS_DESKTOP_PAGE = APP_SHELL === "desktop-builder";
+const IS_MOBILE_PAGE = !IS_DESKTOP_PAGE;
+let route = IS_DESKTOP_PAGE ? "builder" : "today";
 let deferredInstallPrompt = null;
 let restTimerInterval = null;
 let restTimerEndAt = 0;
@@ -364,6 +376,14 @@ function uid() {
 }
 
 function setRoute(nextRoute) {
+  if (IS_DESKTOP_PAGE && nextRoute === "today") {
+    window.location.href = "index.html";
+    return;
+  }
+  if (IS_MOBILE_PAGE && nextRoute === "builder") {
+    window.location.href = "desktop.html";
+    return;
+  }
   releaseObjectUrls();
   route = nextRoute;
   pageTitle.textContent = ROUTE_TITLES[route] || "STRATA";
@@ -1234,7 +1254,7 @@ function render() {
   if (route === "training") renderTraining();
   if (route === "body") renderBody();
   if (route === "physique") renderPhysique();
-  if (route === "history") renderHistory();
+  if (route === "account") renderAccount();
 }
 
 function renderToday() {
@@ -1251,7 +1271,6 @@ function renderToday() {
   const activeWorkout = state.activeSession ? PROGRAM[state.activeSession.workoutId] : null;
 
   view.innerHTML = `
-    ${renderCloudMiniStatus()}
     ${activeWorkout ? `
       <section class="card active-session-card">
         <p class="label">Workout in progress</p>
@@ -1274,6 +1293,15 @@ function renderToday() {
         <button class="ghost full" data-route-jump="training" type="button">Open Training</button>
       </section>
     `}
+
+    ${!state.activeSession ? `
+      <section class="card quick-workout-card">
+        <p class="label">Workout on the fly</p>
+        <h2>Need a second session or unscheduled workout?</h2>
+        <p class="muted">Start blank, add exercises as you train, and save it as its own workout for today.</p>
+        <button class="secondary full" data-action="start-workout" data-workout="adhoc" type="button">Start on-the-fly workout</button>
+      </section>
+    ` : ""}
 
     <section class="card">
       <div class="card-head">
@@ -1309,6 +1337,11 @@ function renderTraining() {
       <p class="muted">Only completed sets count toward volume. Previous loads are pre-filled and shown under each set.</p>
     </section>
     <section class="program-list">
+      <button class="program-card on-the-fly-workout-card" data-action="start-workout" data-workout="adhoc" type="button">
+        <strong>Workout on the fly</strong>
+        <span class="muted">Any time · blank session · add exercises as you train</span>
+        <span class="pill-row" style="margin-top:10px"><span class="pill">Supports second daily workouts</span></span>
+      </button>
       ${[PROGRAM.upper, PROGRAM.lower, PROGRAM[friday]].map((workout) => workoutButton(workout)).join("")}
     </section>
     ${exerciseChoicesMarkup()}
@@ -1548,7 +1581,7 @@ function exerciseLogCard(log, index, workoutId) {
           </div>
         </div>
         <div class="exercise-head-actions">
-          <button class="exercise-mini-action" data-action="exercise-history" data-ex="${index}" type="button">History</button>
+          <button class="exercise-mini-action" data-action="exercise-history" data-ex="${index}" type="button">Past</button>
           <button class="exercise-mini-action" data-action="move-exercise" data-dir="-1" data-ex="${index}" type="button" ${index === 0 ? "disabled" : ""} aria-label="Move exercise up">↑</button>
           <button class="exercise-mini-action" data-action="move-exercise" data-dir="1" data-ex="${index}" type="button" ${index === state.activeSession.logs.length - 1 ? "disabled" : ""} aria-label="Move exercise down">↓</button>
           <span class="exercise-volume" data-exercise-volume="${index}">${kg(current)} kg</span>
@@ -2901,7 +2934,7 @@ function renderCloudMiniStatus() {
     <p class="label">Cloud backup</p>
     <h3>${signedIn ? "Signed in" : "Sign in once on this device"}</h3>
     <p class="muted">${signedIn ? `Backing up as ${escapeHtml(supabaseUser.email || cloud.userEmail || "your account")}. ${last}` : "Your Supabase project is already built into this app. Sign in on this device to enable automatic backup."}</p>
-    <button class="${signedIn ? "secondary" : "primary"}" data-route-jump="history" type="button">${signedIn ? "Backup settings" : "Sign in / restore"}</button>
+    <button class="${signedIn ? "secondary" : "primary"}" data-route-jump="account" type="button">${signedIn ? "Backup settings" : "Sign in / restore"}</button>
   </section>`;
 }
 
@@ -3125,6 +3158,30 @@ function attachCommonHandlers() {
 }
 
 
+
+function renderAccount() {
+  const signedIn = Boolean(supabaseUser);
+  view.innerHTML = `
+    <section class="card account-hero">
+      <p class="label">Account & backup</p>
+      <h2>${signedIn ? "Cloud backup is active" : "Sign in for cloud backup"}</h2>
+      <p class="muted">STRATA stays focused on training. Sign-in, sync and local backup live here quietly in the background.</p>
+    </section>
+    ${renderCloudBackupCard()}
+    <section class="card">
+      <p class="label">Local backup</p>
+      <div class="button-row">
+        <button class="secondary" data-action="export-data" type="button">Export full backup</button>
+        <button class="ghost" data-action="import-data" type="button">Import</button>
+      </div>
+      <input id="import-file" class="hidden" type="file" accept="application/json" />
+      <p class="muted backup-status">Last backup: <strong>${niceDateTime(state.settings.lastBackupAt)}</strong></p>
+      <p class="muted">Use this before changing phones, clearing browser data or installing a major update.</p>
+    </section>
+  `;
+  attachCommonHandlers();
+}
+
 function renderCloudBackupCard() {
   const cloud = { ...defaultState().settings.cloud, ...(state.settings.cloud || {}) };
   const configured = Boolean(getSupabaseSettings().url && getSupabaseSettings().anonKey);
@@ -3226,8 +3283,8 @@ function saveCloudConfig(event) {
   supabaseClient = null;
   saveState();
   showNotice("Supabase settings saved.", "good");
-  renderHistory();
-  refreshSupabaseUser().then(() => { if (route === "history") renderHistory(); });
+  renderAccount();
+  refreshSupabaseUser().then(() => { if (route === "account") renderAccount(); });
 }
 
 async function handleCloudSignIn(event) {
@@ -3246,7 +3303,7 @@ async function handleCloudSignIn(event) {
     showNotice("Signed in. Restoring and syncing your backup…", "good");
   });
   await bootstrapCloudSync({ reason: "signin" });
-  if (route === "history") renderHistory();
+  if (route === "account") renderAccount();
 }
 
 async function handleCloudSignUp() {
@@ -3264,7 +3321,7 @@ async function handleCloudSignUp() {
     showNotice(data?.user ? "Account created. Setting up cloud backup…" : "Account created. Check your email if confirmation is required.", "good", 6500);
   });
   if (supabaseUser) await bootstrapCloudSync({ reason: "signup" });
-  if (route === "history") renderHistory();
+  if (route === "account") renderAccount();
 }
 
 async function handleCloudLogout() {
@@ -3274,7 +3331,7 @@ async function handleCloudLogout() {
     supabaseUser = null;
     showNotice("Signed out of Supabase.", "good");
   });
-  if (route === "history") renderHistory();
+  if (route === "account") renderAccount();
 }
 
 async function runCloudTask(message, task) {
@@ -3347,7 +3404,7 @@ async function bootstrapCloudSync({ reason = "auto" } = {}) {
     }
   });
   await syncCloudBackup({ manual: false, quiet: true });
-  if (route === "history") renderHistory();
+  if (route === "account") renderAccount();
   return true;
 }
 
@@ -3382,7 +3439,7 @@ async function syncCloudBackup({ manual = false, quiet = false } = {}) {
     state.sessions = (state.sessions || []).map((session) => ({ ...session, cloudSyncedAt: now, cloudSyncError: "" }));
     saveState();
     if (manual || !quiet) showNotice("Cloud backup synced.", "good");
-    if (route === "history") renderHistory();
+    if (route === "account") renderAccount();
     return true;
   } catch (error) {
     console.error(error);
@@ -3421,7 +3478,7 @@ async function restoreFromCloud() {
     showNotice("Cloud backup restored and merged.", "good");
   });
   await syncCloudBackup({ manual: false, quiet: true });
-  if (route === "history") renderHistory();
+  if (route === "account") renderAccount();
 }
 
 
@@ -3477,7 +3534,7 @@ async function exportData(button) {
     link.remove();
     URL.revokeObjectURL(url);
     showNotice("Full backup exported.", "good");
-    renderHistory();
+    render();
   } catch (error) {
     console.error(error);
     showNotice("Backup could not be created.", "danger", 0);
@@ -3514,7 +3571,7 @@ function importData(event) {
       await migrateLegacyPhotos();
       saveState();
       showNotice("Backup imported.", "good");
-      renderHistory();
+      render();
     } catch (error) {
       console.error(error);
       showNotice("Could not import that backup file.", "danger", 0);
@@ -3635,7 +3692,7 @@ function gymDoorExerciseCard(log, index, workoutId) {
         <div class="gym-option-grid">
           <button data-action="add-warmup-set" data-ex="${index}" type="button">+ warm-up</button>
           <button data-action="add-set" data-ex="${index}" type="button">+ work set</button>
-          <button data-action="exercise-history" data-ex="${index}" type="button">History</button>
+          <button data-action="exercise-history" data-ex="${index}" type="button">Past</button>
           <button data-action="move-exercise" data-dir="-1" data-ex="${index}" type="button" ${index === 0 ? "disabled" : ""}>Move up</button>
           <button data-action="move-exercise" data-dir="1" data-ex="${index}" type="button" ${index === state.activeSession.logs.length - 1 ? "disabled" : ""}>Move down</button>
           <button class="danger-text" data-action="remove-exercise" data-ex="${index}" type="button">Remove</button>
@@ -3993,6 +4050,559 @@ exerciseHistoryDialog?.addEventListener("click", (event) => {
   if (event.target === exerciseHistoryDialog) closeExerciseHistoryDialog();
 });
 
+
+
+/* =========================================================
+   STRATA v1.5.5 — Monday field-test patch
+   Scope: workout overview → exercise focus → rest/finish → gym-door report.
+   ========================================================= */
+
+const STRATA_V155_EXTRA_LIBRARY = [
+  { exerciseId: "alt-incline-smith", variantId: "alt-incline-smith", name: "Smith incline press", muscle: "Chest", type: "compound", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Smith incline press · Chest" },
+  { exerciseId: "alt-incline-machine", variantId: "alt-incline-machine", name: "Incline machine press", muscle: "Chest", type: "machine", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Incline machine press · Chest" },
+  { exerciseId: "alt-machine-chest-press", variantId: "alt-machine-chest-press", name: "Machine chest press", muscle: "Chest", type: "machine", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Machine chest press · Chest" },
+  { exerciseId: "alt-pec-deck", variantId: "alt-pec-deck", name: "Pec deck", muscle: "Chest", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 90, custom: false, libraryLabel: "Pec deck · Chest" },
+  { exerciseId: "alt-cable-fly", variantId: "alt-cable-fly", name: "Cable fly", muscle: "Chest", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 90, custom: false, libraryLabel: "Cable fly · Chest" },
+
+  { exerciseId: "alt-chest-supported-row", variantId: "alt-chest-supported-row", name: "Chest-supported row", muscle: "Back", type: "machine", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Chest-supported row · Back" },
+  { exerciseId: "alt-seated-cable-row", variantId: "alt-seated-cable-row", name: "Seated cable row", muscle: "Back", type: "compound", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Seated cable row · Back" },
+  { exerciseId: "alt-machine-row", variantId: "alt-machine-row", name: "Machine row", muscle: "Back", type: "machine", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Machine row · Back" },
+  { exerciseId: "alt-one-arm-db-row", variantId: "alt-one-arm-db-row", name: "One-arm dumbbell row", muscle: "Back", type: "compound", sets: 3, reps: "8–12", loadLabel: "kg / hand", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 120, custom: false, libraryLabel: "One-arm dumbbell row · Back" },
+  { exerciseId: "alt-assisted-pullup", variantId: "alt-assisted-pullup", name: "Assisted pull-up", muscle: "Back", type: "machine", sets: 3, reps: "8–12", loadLabel: "assistance kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: true, restSeconds: 150, custom: false, libraryLabel: "Assisted pull-up · Back" },
+
+  { exerciseId: "alt-machine-shoulder-press", variantId: "alt-machine-shoulder-press", name: "Machine shoulder press", muscle: "Shoulders", type: "machine", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Machine shoulder press · Shoulders" },
+  { exerciseId: "alt-smith-shoulder-press", variantId: "alt-smith-shoulder-press", name: "Smith shoulder press", muscle: "Shoulders", type: "compound", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Smith shoulder press · Shoulders" },
+  { exerciseId: "alt-cable-lateral-raise", variantId: "alt-cable-lateral-raise", name: "Cable lateral raise", muscle: "Side delts", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 75, custom: false, libraryLabel: "Cable lateral raise · Side delts" },
+  { exerciseId: "alt-machine-lateral-raise", variantId: "alt-machine-lateral-raise", name: "Machine lateral raise", muscle: "Side delts", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 75, custom: false, libraryLabel: "Machine lateral raise · Side delts" },
+
+  { exerciseId: "alt-rope-pressdown", variantId: "alt-rope-pressdown", name: "Rope pressdown", muscle: "Triceps", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 75, custom: false, libraryLabel: "Rope pressdown · Triceps" },
+  { exerciseId: "alt-overhead-cable-triceps", variantId: "alt-overhead-cable-triceps", name: "Overhead cable triceps extension", muscle: "Triceps", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 75, custom: false, libraryLabel: "Overhead cable triceps extension · Triceps" },
+  { exerciseId: "alt-ez-curl", variantId: "alt-ez-curl", name: "EZ-bar curl", muscle: "Biceps", type: "isolation", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 75, custom: false, libraryLabel: "EZ-bar curl · Biceps" },
+  { exerciseId: "alt-incline-db-curl", variantId: "alt-incline-db-curl", name: "Incline dumbbell curl", muscle: "Biceps", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg / hand", loadMultiplier: 2, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 75, custom: false, libraryLabel: "Incline dumbbell curl · Biceps" },
+
+  { exerciseId: "alt-hack-squat", variantId: "alt-hack-squat", name: "Hack squat", muscle: "Quads", type: "machine", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Hack squat · Quads" },
+  { exerciseId: "alt-pendulum-squat", variantId: "alt-pendulum-squat", name: "Pendulum squat", muscle: "Quads", type: "machine", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Pendulum squat · Quads" },
+  { exerciseId: "alt-belt-squat", variantId: "alt-belt-squat", name: "Belt squat", muscle: "Quads", type: "machine", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Belt squat · Quads" },
+  { exerciseId: "alt-bulgarian-split-squat", variantId: "alt-bulgarian-split-squat", name: "Bulgarian split squat", muscle: "Quads", type: "unilateral", sets: 3, reps: "8–12 per leg", loadLabel: "kg / hand", loadMultiplier: 2, repMultiplier: 2, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Bulgarian split squat · Quads" },
+
+  { exerciseId: "alt-romanian-deadlift", variantId: "alt-romanian-deadlift", name: "Romanian deadlift", muscle: "Hamstrings", type: "hinge", sets: 3, reps: "6–10", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 180, custom: false, libraryLabel: "Romanian deadlift · Hamstrings" },
+  { exerciseId: "alt-dumbbell-rdl", variantId: "alt-dumbbell-rdl", name: "Dumbbell Romanian deadlift", muscle: "Hamstrings", type: "hinge", sets: 3, reps: "8–12", loadLabel: "kg / hand", loadMultiplier: 2, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Dumbbell Romanian deadlift · Hamstrings" },
+  { exerciseId: "alt-single-leg-curl", variantId: "alt-single-leg-curl", name: "Single-leg curl", muscle: "Hamstrings", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 2, volumeMode: "external", allowZeroWeight: false, restSeconds: 90, custom: false, libraryLabel: "Single-leg curl · Hamstrings" },
+  { exerciseId: "alt-glute-ham-raise", variantId: "alt-glute-ham-raise", name: "Glute-ham raise", muscle: "Hamstrings", type: "accessory", sets: 3, reps: "8–12", loadLabel: "added kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: true, restSeconds: 120, custom: false, libraryLabel: "Glute-ham raise · Hamstrings" },
+
+  { exerciseId: "alt-hip-thrust-machine", variantId: "alt-hip-thrust-machine", name: "Hip thrust machine", muscle: "Glutes", type: "machine", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Hip thrust machine · Glutes" },
+  { exerciseId: "alt-glute-bridge", variantId: "alt-glute-bridge", name: "Barbell glute bridge", muscle: "Glutes", type: "compound", sets: 3, reps: "8–12", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 150, custom: false, libraryLabel: "Barbell glute bridge · Glutes" },
+  { exerciseId: "alt-donkey-calf", variantId: "alt-donkey-calf", name: "Donkey calf raise", muscle: "Calves", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 75, custom: false, libraryLabel: "Donkey calf raise · Calves" },
+  { exerciseId: "alt-leg-press-calf", variantId: "alt-leg-press-calf", name: "Leg press calf raise", muscle: "Calves", type: "isolation", sets: 3, reps: "10–15", loadLabel: "kg", loadMultiplier: 1, repMultiplier: 1, volumeMode: "external", allowZeroWeight: false, restSeconds: 75, custom: false, libraryLabel: "Leg press calf raise · Calves" }
+];
+
+const STRATA_V155_BASE_LIBRARY_ITEMS = exerciseLibraryItems;
+exerciseLibraryItems = function exerciseLibraryItemsV155() {
+  const seen = new Set();
+  return [...STRATA_V155_BASE_LIBRARY_ITEMS(), ...STRATA_V155_EXTRA_LIBRARY]
+    .filter((item) => {
+      const key = exerciseIdentity(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+};
+
+alternativeOptionsForLog = function alternativeOptionsForLogV155(log) {
+  const currentKey = exerciseIdentity(log);
+  const library = exerciseLibraryItems();
+  const sameExercise = library.filter((item) => item.exerciseId === log.exerciseId && exerciseIdentity(item) !== currentKey);
+  const exactMuscle = library.filter((item) => item.muscle === log.muscle && exerciseIdentity(item) !== currentKey && item.exerciseId !== log.exerciseId);
+  const groupedMuscle = library.filter((item) => muscleGroupKey(item.muscle) === muscleGroupKey(log.muscle) && exerciseIdentity(item) !== currentKey && item.exerciseId !== log.exerciseId && item.muscle !== log.muscle);
+  return [...sameExercise, ...exactMuscle, ...groupedMuscle].slice(0, 10);
+};
+
+function muscleGroupKey(muscle) {
+  const m = String(muscle || "").toLowerCase();
+  if (m.includes("chest")) return "chest";
+  if (m.includes("back") || m.includes("lat")) return "back";
+  if (m.includes("shoulder") || m.includes("delt")) return "delts";
+  if (m.includes("tricep")) return "triceps";
+  if (m.includes("bicep") || m.includes("curl")) return "biceps";
+  if (m.includes("quad")) return "quads";
+  if (m.includes("hamstring") || m.includes("posterior") || m.includes("hinge")) return "hams";
+  if (m.includes("glute")) return "glutes";
+  if (m.includes("calf")) return "calves";
+  return m;
+}
+
+openExercise = function openExerciseV155(index) {
+  if (!state.activeSession) return;
+  state.activeSession.focusMode = "exercise";
+  setActiveExercise(index);
+  saveState();
+  renderActiveSession();
+};
+
+jumpExercise = function jumpExerciseV155(direction) {
+  if (!state.activeSession) return;
+  const current = Number(state.activeSession.activeExerciseIndex || 0);
+  const next = Math.max(0, Math.min(state.activeSession.logs.length - 1, current + direction));
+  openExercise(next);
+};
+
+function returnToWorkoutList(message = "Workout list") {
+  if (!state.activeSession) return;
+  state.activeSession.focusMode = "overview";
+  saveState();
+  dismissRestTimer();
+  renderActiveSession();
+  if (message) showNotice(message, "info");
+}
+
+document.addEventListener("click", (event) => {
+  const exit = event.target.closest?.("[data-action='return-workout-list']");
+  if (exit) {
+    event.preventDefault();
+    returnToWorkoutList("Back to workout list.");
+  }
+});
+
+renderActiveSession = function renderActiveSessionV155() {
+  const session = state.activeSession;
+  if (!session) return;
+  document.body.classList.add("workout-mode");
+  if (session.focusMode !== "exercise") {
+    renderWorkoutOverview(session);
+    return;
+  }
+  const workout = PROGRAM[session.workoutId] || { title: session.workoutId };
+  pageTitle.textContent = workout.title;
+  const prev = previousSession(session.workoutId, session.id);
+  const previousVolume = prev ? calcSessionVolume(prev) : 0;
+  const currentVolume = calcSessionVolume(session);
+  const delta = currentVolume - previousVolume;
+  const planned = countPlannedSets(session);
+  const completed = countCompletedSets(session);
+  const progress = planned ? Math.round((completed / planned) * 100) : 0;
+  const activeIndex = Math.max(0, Math.min(Number(session.activeExerciseIndex || 0), session.logs.length - 1));
+  session.activeExerciseIndex = activeIndex;
+  view.innerHTML = `
+    <header class="workout-command workout-command-compact exercise-focus-head">
+      <div class="workout-command-top">
+        <button class="workout-icon-button" data-action="return-workout-list" type="button" aria-label="Back to workout list">←</button>
+        <div class="workout-title-block">
+          <span class="workout-kicker">EXERCISE MODE</span>
+          <strong>${escapeHtml(workout.title || session.workoutId)}</strong>
+        </div>
+        <button class="workout-finish-button" data-action="finish-session" type="button">Finish</button>
+      </div>
+      <div class="workout-command-stats">
+        <span><b id="session-elapsed">${formatElapsed(session.startedAt)}</b><small>time</small></span>
+        <span><b><i id="completed-set-count">${completed}</i>/${planned}</b><small>sets</small></span>
+        <span><b id="session-current-volume">${kg(currentVolume)}</b><small>kg</small></span>
+        <span><b id="session-delta-volume" class="${delta >= 0 ? "positive" : "negative"}">${delta >= 0 ? "+" : ""}${kg(delta)}</b><small>last</small></span>
+      </div>
+      <div class="workout-progress"><span id="session-progress-bar" style="width:${progress}%"></span></div>
+    </header>
+    <section id="active-log" class="active-workout-log gym-focus-only exercise-focus-only">
+      ${gymDoorExerciseCard(session.logs[activeIndex], activeIndex, session.workoutId)}
+    </section>
+  `;
+  attachCommonHandlers();
+  view.querySelectorAll("input[data-log]").forEach((input) => {
+    input.addEventListener("change", updateActiveSessionField);
+    input.addEventListener("keydown", (event) => { if (event.key === "Enter") event.currentTarget.blur(); });
+  });
+  view.querySelectorAll("textarea[data-setup-note]").forEach((textarea) => textarea.addEventListener("change", updateSetupNote));
+  startSessionClock();
+};
+
+function renderWorkoutOverview(session) {
+  const workout = PROGRAM[session.workoutId] || { title: session.workoutId };
+  pageTitle.textContent = workout.title;
+  const prev = previousSession(session.workoutId, session.id);
+  const previousVolume = prev ? calcSessionVolume(prev) : 0;
+  const currentVolume = calcSessionVolume(session);
+  const planned = countPlannedSets(session);
+  const completed = countCompletedSets(session);
+  const progress = planned ? Math.round((completed / planned) * 100) : 0;
+  const delta = currentVolume - previousVolume;
+  view.innerHTML = `
+    <header class="workout-command workout-overview-head">
+      <div class="workout-command-top">
+        <div class="workout-title-block"><span class="workout-kicker">GYM MODE</span><strong>${escapeHtml(workout.title || session.workoutId)}</strong></div>
+        <button class="workout-finish-button" data-action="finish-session" type="button">Finish</button>
+      </div>
+      <div class="workout-command-stats">
+        <span><b id="session-elapsed">${formatElapsed(session.startedAt)}</b><small>time</small></span>
+        <span><b><i id="completed-set-count">${completed}</i>/${planned}</b><small>sets</small></span>
+        <span><b id="session-current-volume">${kg(currentVolume)}</b><small>kg</small></span>
+        <span><b id="session-delta-volume" class="${delta >= 0 ? "positive" : "negative"}">${delta >= 0 ? "+" : ""}${kg(delta)}</b><small>last</small></span>
+      </div>
+      <div class="workout-progress"><span id="session-progress-bar" style="width:${progress}%"></span></div>
+    </header>
+    <section class="workout-list-overview">
+      <header><span>Workout list</span><strong>Tap an exercise to focus</strong></header>
+      ${session.logs.map((log, index) => workoutOverviewRow(log, index)).join("")}
+      <button class="add-exercise-button" data-action="add-exercise" type="button"><span>＋</span><strong>Add another exercise</strong><small>Add it to this workout and keep it for next time.</small></button>
+      <button class="ghost full" data-action="cancel-session" type="button">Discard workout</button>
+    </section>
+  `;
+  attachCommonHandlers();
+  startSessionClock();
+}
+
+function workoutOverviewRow(log, index) {
+  const completed = countCompletedSets({ logs: [log] });
+  const planned = countPlannedSets({ logs: [log] });
+  const volume = calcExerciseVolume(log);
+  const prevLog = latestExerciseHistoryLog(log);
+  const previousVolume = prevLog ? calcExerciseVolume(prevLog) : 0;
+  const delta = volume - previousVolume;
+  const target = currentLogTarget(log);
+  const status = !completed ? "Not started" : target ? "In progress" : "Complete";
+  const dp = !target ? doubleProgressionSignal(log) : null;
+  return `<button class="workout-overview-row ${!target ? "complete" : completed ? "active" : ""}" data-action="open-exercise" data-ex="${index}" type="button">
+    <span class="overview-index">${String(index + 1).padStart(2, "0")}</span>
+    <span class="overview-main"><strong>${escapeHtml(log.name)}</strong><small>${escapeHtml(log.muscle || "Other")} · ${completed}/${planned} sets · ${status}</small>${dp ? `<em>${escapeHtml(dp.ready ? "Ready to progress" : "Hold load")}</em>` : ""}</span>
+    <span class="overview-side"><b>${volume ? kg(volume) : "—"}</b><small class="${delta >= 0 ? "positive" : "negative"}">${previousVolume ? `${delta >= 0 ? "+" : ""}${kg(delta)}` : "baseline"}</small></span>
+  </button>`;
+}
+
+function isExerciseFinishedAfterThisSet(log) {
+  return !currentLogTarget(log);
+}
+
+completeSet = function completeSetV155(exerciseIndex, setIndex, isDrop, button, dropIndex = null) {
+  const log = state.activeSession?.logs?.[exerciseIndex];
+  if (!log) return;
+  commitSetInputs(exerciseIndex, setIndex, isDrop, dropIndex);
+  const target = isDrop ? getDropTarget(log, setIndex, dropIndex) : log.sets?.[setIndex];
+  if (!target) return;
+  const error = validateSet(log, target);
+  if (error) {
+    showNotice(error, "warn");
+    const entry = button.closest(isDrop ? "[data-drop-entry]" : "[data-set-entry]");
+    const firstEmpty = Array.from(entry?.querySelectorAll("input") || []).find((input) => !input.value);
+    firstEmpty?.focus();
+    return;
+  }
+  target.completed = true;
+  target.completedAt = new Date().toISOString();
+  saveState();
+  updateActiveSessionSummary(exerciseIndex);
+  const context = restContextAfterSet(log, exerciseIndex, setIndex, target, isDrop, dropIndex);
+  if (isExerciseFinishedAfterThisSet(log)) {
+    startSetCompleteOverlay(log.name, context);
+    return;
+  }
+  const restSeconds = target.setType === "warmup" ? Math.min(90, restSecondsForExercise(state.activeSession.workoutId, exerciseIndex)) : restSecondsForExercise(state.activeSession.workoutId, exerciseIndex);
+  startRestTimer(restSeconds, log.name, context);
+};
+
+const STRATA_V155_BASE_START_REST = startRestTimer;
+startRestTimer = function startRestTimerV155(seconds, exerciseName, context = {}) {
+  restTimer?.classList.remove("set-complete-overlay");
+  if (restTimer) delete restTimer.dataset.mode;
+  STRATA_V155_BASE_START_REST(seconds, exerciseName, context);
+};
+
+function startSetCompleteOverlay(exerciseName, context = {}) {
+  prepareAudio();
+  clearInterval(restTimerInterval);
+  restTimerEndAt = 0;
+  restTimer?.classList.remove("hidden");
+  restTimer?.classList.add("set-complete-overlay");
+  if (restTimer) restTimer.dataset.mode = "exerciseComplete";
+  document.body.classList.add("rest-timer-active");
+  const status = document.querySelector("#rest-timer-status");
+  const time = document.querySelector("#rest-timer-time");
+  const exercise = document.querySelector("#rest-timer-exercise");
+  const dismiss = document.querySelector("#rest-timer-dismiss");
+  if (status) status.textContent = "Exercise complete";
+  if (time) time.textContent = "DONE";
+  if (exercise) exercise.textContent = exerciseName;
+  if (dismiss) dismiss.textContent = "Back to list";
+  let details = document.querySelector("#rest-timer-details");
+  if (!details) {
+    details = document.createElement("div");
+    details.id = "rest-timer-details";
+    details.className = "rest-timer-details";
+    restTimer?.querySelector(".rest-timer-copy")?.appendChild(details);
+  }
+  details.innerHTML = `
+    ${context.last ? `<div class="rest-last"><span>Last set</span><strong>${escapeHtml(context.last)}</strong></div>` : ""}
+    <div class="rest-next"><span>Next</span><strong>No rest timer needed. Rate the final set, then return to the workout list.</strong></div>
+    ${context.isWarmup ? "" : restEffortMarkup(context)}
+  `;
+  details.querySelectorAll("[data-rest-effort]").forEach((button) => button.addEventListener("click", () => {
+    setEffort(Number(button.dataset.ex), button.dataset.set !== undefined ? Number(button.dataset.set) : null, button.dataset.scale, button.dataset.value, button.dataset.drop === "true", button, button.dataset.dropIndex !== undefined ? Number(button.dataset.dropIndex) : null);
+    details.querySelectorAll("[data-rest-effort]").forEach((chip) => chip.classList.toggle("selected", chip === button));
+  }));
+  try { navigator.vibrate?.(40); } catch {}
+}
+
+const STRATA_V155_BASE_DISMISS_REST = dismissRestTimer;
+dismissRestTimer = function dismissRestTimerV155() {
+  const completeMode = restTimer?.dataset?.mode === "exerciseComplete";
+  STRATA_V155_BASE_DISMISS_REST();
+  restTimer?.classList.remove("set-complete-overlay");
+  if (restTimer) delete restTimer.dataset.mode;
+  if (completeMode && state.activeSession) {
+    state.activeSession.focusMode = "overview";
+    saveState();
+    if (route === "training") renderActiveSession();
+  }
+};
+
+function formatDurationCompact(startedAt, completedAt) {
+  const minutes = Math.max(1, Math.round((new Date(completedAt) - new Date(startedAt)) / 60000));
+  if (minutes < 60) return { value: String(minutes), label: "minutes" };
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return { value: `${h}h ${m ? `${m}m` : ""}`.trim(), label: "duration" };
+}
+
+function completedWorkSetsText(log) {
+  const sets = workingSetsForProgression(log).filter((set) => set.setType !== "drop");
+  return sets.length ? sets.map((set) => `${set.weight || "—"}×${set.reps || "—"}${setRpeValue(set) ? ` @${setRpeValue(set).toFixed(0)}` : ""}`).join(" / ") : "No work sets";
+}
+
+function bestSetText(log) {
+  const best = bestSetForLog(log)?.set;
+  if (!best) return "—";
+  return `${best.weight || "—"}×${best.reps || "—"}${setRpeValue(best) ? ` @RPE ${setRpeValue(best).toFixed(0)}` : ""}`;
+}
+
+function exercisePbBadges(log, session) {
+  const currentVolume = calcExerciseVolume(log);
+  const currentBest = bestSetForLog(log);
+  const currentBestLoad = currentBest ? adjustedSetLoad(currentBest.set, log) : 0;
+  const currentBestScore = currentBest ? setPerformanceScore(currentBest.set, log) : 0;
+  const prior = exerciseHistoryEntries(log).filter(({ session: item }) => item.id !== session.id && String(item.completedAt || "") < String(session.completedAt || ""));
+  if (!prior.length) return ["Baseline"];
+  const priorBestVolume = Math.max(0, ...prior.map(({ log: priorLog }) => calcExerciseVolume(priorLog)));
+  const priorBestLoad = Math.max(0, ...prior.map(({ log: priorLog }) => bestSetForLog(priorLog)).filter(Boolean).map((best) => adjustedSetLoad(best.set, best.log)));
+  const priorBestScore = Math.max(0, ...prior.map(({ log: priorLog }) => bestSetForLog(priorLog)).filter(Boolean).map((best) => setPerformanceScore(best.set, best.log)));
+  const badges = [];
+  if (currentVolume > priorBestVolume) badges.push("Volume PB");
+  if (currentBestLoad > priorBestLoad) badges.push("Load PB");
+  if (currentBestScore > priorBestScore) badges.push("Best-set PB");
+  return badges.length ? badges : [];
+}
+
+function muscleSessionVerdict(item) {
+  if (!item.sets) return "No hard sets recorded.";
+  if (item.avgRpe === null) return "Effort missing — log RPE to make this useful.";
+  if (item.sets <= 2 && item.avgRpe >= 9) return "Low set count, but very hard effort. Meaningful stimulus.";
+  if (item.sets <= 2) return "Low set count. Useful exposure, but probably not the main muscle today.";
+  if (item.sets >= 3 && item.avgRpe >= 8.5) return "Strong working stimulus. Volume and effort both count.";
+  if (item.sets >= 4 && item.avgRpe < 8) return "Good volume, but effort was moderate. Check whether sets were hard enough.";
+  return "Useful stimulus recorded.";
+}
+
+function muscleBarWidth(item, maxSets) {
+  return Math.max(16, Math.min(100, Math.round((item.sets / Math.max(1, maxSets)) * 100)));
+}
+
+renderWorkoutComplete = function renderWorkoutCompleteV155(session) {
+  const workout = PROGRAM[session.workoutId];
+  const volume = calcSessionVolume(session);
+  const delta = volume - (session.previousVolume || 0);
+  const duration = formatDurationCompact(session.startedAt, session.completedAt);
+  const averageRpe = sessionAverageRpe(session);
+  const muscles = sessionMuscleStimulusSummary(session);
+  const maxMuscleSets = Math.max(1, ...muscles.map((item) => item.sets || 0));
+  const actions = gymDoorActions(session);
+  const exerciseRows = session.logs.map((log) => {
+    const previousLog = exerciseHistoryEntries(log).find(({ session: item }) => item.id !== session.id && String(item.completedAt || "") < session.completedAt)?.log || null;
+    const result = matchedProgress(log, previousLog);
+    const volumeDelta = exerciseVolumeDeltaText(log, previousLog);
+    const dp = doubleProgressionSignal(log);
+    const badges = exercisePbBadges(log, session);
+    return { log, previousLog, result, volumeDelta, dp, badges };
+  });
+  document.body.classList.remove("workout-mode");
+  stopSessionClock();
+  pageTitle.textContent = "Workout Complete";
+  view.innerHTML = `
+    <section class="completion-hero gym-door-hero v155-report-hero">
+      <span>GYM-DOOR REPORT</span>
+      <h2>${escapeHtml(workout?.title || session.workoutId)}</h2>
+      <div class="completion-primary"><strong>${escapeHtml(duration.value)}</strong><small>${escapeHtml(duration.label)}</small></div>
+      <div class="completion-strip completion-strip-advanced">
+        <div><strong>${countHardSets(session)}</strong><span>hard sets</span></div>
+        <div><strong>${kg(volume)}</strong><span>kg volume</span></div>
+        <div><strong>${delta >= 0 ? "+" : ""}${kg(delta)}</strong><span>vs last</span></div>
+        <div><strong>${averageRpe !== null ? averageRpe.toFixed(1) : "—"}</strong><span>avg RPE</span></div>
+      </div>
+    </section>
+
+    <section class="gym-door-actions next-actions-v155">
+      <header><span>Next time</span><strong>Action list for the next repeat session</strong></header>
+      ${actions.map((item) => `<article class="gym-action ${escapeHtml(item.tone)}"><h3>${escapeHtml(item.name)}</h3><strong>${escapeHtml(item.action)}</strong><p>${escapeHtml(item.detail)}</p></article>`).join("")}
+    </section>
+
+    <section class="completion-exercises gym-door-exercises exercise-report-v155">
+      <header><span>Exercise report</span><strong>Volume, PBs and progression per exercise</strong></header>
+      ${exerciseRows.map(({ log, previousLog, result, volumeDelta, dp, badges }) => `<article class="completion-exercise-v155 ${escapeHtml(result.tone)} ${dp.ready ? "ready-progress" : ""}">
+        <div class="exercise-report-top"><div><h3>${escapeHtml(log.name)}</h3><p>${escapeHtml(result.label)}</p></div><strong>${escapeHtml(volumeDelta.text)}</strong></div>
+        <div class="exercise-report-sets"><div><span>Today</span><b>${escapeHtml(completedWorkSetsText(log))}</b></div><div><span>Previous</span><b>${escapeHtml(previousLog ? completedWorkSetsText(previousLog) : "Baseline")}</b></div><div><span>Best set</span><b>${escapeHtml(bestSetText(log))}</b></div></div>
+        <div class="pb-badge-row">${badges.map((badge) => `<span>${escapeHtml(badge)}</span>`).join("") || `<span class="muted-badge">No PB</span>`}</div>
+        <div class="progression-callout ${dp.ready ? "ready" : "hold"}"><strong>${escapeHtml(dp.label)}</strong><span>${escapeHtml(dp.detail)}</span></div>
+      </article>`).join("")}
+    </section>
+
+    <section class="muscle-read-v155">
+      <header><span>Muscles worked</span><strong>Sets, effort and rep focus — no fluff</strong></header>
+      ${muscles.map((item) => `<article class="muscle-read-row ${escapeHtml(item.intensityTone)}">
+        <div class="muscle-read-head"><div><h3>${escapeHtml(item.muscle)}</h3><p>${item.sets} hard set${item.sets === 1 ? "" : "s"} · ${escapeHtml(item.primaryRange)} focus</p></div><strong>${item.avgRpe !== null ? `RPE ${item.avgRpe.toFixed(1)}` : "RPE —"}</strong></div>
+        <div class="muscle-read-bar"><span style="width:${muscleBarWidth(item, maxMuscleSets)}%"></span></div>
+        <div class="muscle-read-meta"><span>${escapeHtml(item.volumeLabel)}</span><span>${escapeHtml(item.intensity)} effort</span><span>${item.avgReps !== null ? `${item.avgReps.toFixed(1)} avg reps` : "reps logged"}</span></div>
+        <p>${escapeHtml(muscleSessionVerdict(item))}</p>
+      </article>`).join("") || `<p class="muted">No hard-set muscle stimulus recorded.</p>`}
+    </section>
+
+    <button class="primary full" data-route-jump="today" type="button">Return to Today</button>
+  `;
+  view.querySelector("[data-route-jump]")?.addEventListener("click", () => setRoute("today"));
+};
+
+
+
+/* =========================================================
+   STRATA v1.5.6 — Workout on the fly + multiple sessions per day
+   Scope: gym-door only. Adds a blank session path without touching Body/Physique.
+   ========================================================= */
+
+const STRATA_V156_BASE_START_WORKOUT = startWorkout;
+startWorkout = function startWorkoutV156(workoutId) {
+  if (workoutId !== "adhoc") return STRATA_V156_BASE_START_WORKOUT(workoutId);
+  if (state.activeSession && !confirm("A workout is already in progress. Discard it and start a new on-the-fly workout?")) return;
+  const now = new Date();
+  const defaultName = `On-the-fly ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  const customTitle = (prompt("Name this workout", defaultName) || defaultName).trim();
+  state.activeSession = {
+    id: uid(),
+    workoutId: "adhoc",
+    workoutTitle: customTitle || "Workout on the fly",
+    date: todayISO(),
+    startedAt: new Date().toISOString(),
+    activeExerciseIndex: 0,
+    focusMode: "overview",
+    bodyweight: Number(getWeightForDate(todayISO())?.weight || getLatestWeight()?.weight || 0),
+    isAdhoc: true,
+    logs: [],
+    notes: ""
+  };
+  saveState();
+  setRoute("training");
+};
+
+const STRATA_V156_BASE_PREVIOUS_SESSION = previousSession;
+previousSession = function previousSessionV156(workoutId, excludeId = null) {
+  if (workoutId === "adhoc") return null;
+  return STRATA_V156_BASE_PREVIOUS_SESSION(workoutId, excludeId);
+};
+
+function sessionTitle(session) {
+  if (!session) return "Workout";
+  return session.workoutTitle || PROGRAM[session.workoutId]?.title || session.workoutId || "Workout";
+}
+
+const STRATA_V156_BASE_RENDER_WORKOUT_OVERVIEW = renderWorkoutOverview;
+renderWorkoutOverview = function renderWorkoutOverviewV156(session) {
+  STRATA_V156_BASE_RENDER_WORKOUT_OVERVIEW(session);
+  const title = sessionTitle(session);
+  pageTitle.textContent = title;
+  const titleEl = view.querySelector(".workout-title-block strong");
+  if (titleEl) titleEl.textContent = title;
+  const listHeader = view.querySelector(".workout-list-overview header strong");
+  if (listHeader && session.workoutId === "adhoc") listHeader.textContent = "Add an exercise to begin";
+};
+
+const STRATA_V156_BASE_RENDER_ACTIVE_SESSION = renderActiveSession;
+renderActiveSession = function renderActiveSessionV156() {
+  STRATA_V156_BASE_RENDER_ACTIVE_SESSION();
+  if (!state.activeSession) return;
+  const title = sessionTitle(state.activeSession);
+  pageTitle.textContent = title;
+  const titleEl = view.querySelector(".workout-title-block strong");
+  if (titleEl) titleEl.textContent = title;
+};
+
+const STRATA_V156_BASE_RENDER_WORKOUT_COMPLETE = renderWorkoutComplete;
+renderWorkoutComplete = function renderWorkoutCompleteV156(session) {
+  STRATA_V156_BASE_RENDER_WORKOUT_COMPLETE(session);
+  const h2 = view.querySelector(".completion-hero h2, .gym-door-hero h2");
+  if (h2) h2.textContent = sessionTitle(session);
+};
+
+
+
+
+/* =========================================================
+   STRATA v1.5.11 — Separate Mobile/Desktop Pages
+   Scope: no new features. Splits mobile execution and desktop planning into
+   separate entry pages while preserving the frozen v1.5.10 functionality.
+   ========================================================= */
+
+ROUTE_TITLES.builder = "Desktop Builder";
+
+function shellHomeLinkMarkup() {
+  return IS_DESKTOP_PAGE
+    ? `<a class="ghost small shell-link" href="index.html">Open mobile app</a>`
+    : `<a class="ghost small shell-link" href="desktop.html">Open desktop builder</a>`;
+}
+
+function installShellLinks() {
+  const topbar = document.querySelector(".topbar");
+  if (!topbar || topbar.querySelector(".shell-link")) return;
+  topbar.insertAdjacentHTML("beforeend", shellHomeLinkMarkup());
+}
+
+const STRATA_V1511_BASE_RENDER_CARDIO = renderCardio;
+renderCardio = function renderCardioV1511() {
+  STRATA_V1511_BASE_RENDER_CARDIO();
+  if (IS_MOBILE_PAGE) {
+    view.querySelectorAll(".desktop-cardio-builder, .cardio-prescriptions-panel").forEach((el) => el.remove());
+  }
+  if (IS_DESKTOP_PAGE) {
+    pageTitle.textContent = "Desktop Cardio Planner";
+    view.querySelectorAll(".cardio-log-card, .cardio-history-panel").forEach((el) => el.remove());
+  }
+};
+
+const STRATA_V1511_BASE_RENDER_BUILDER = renderBuilder;
+renderBuilder = function renderBuilderV1511() {
+  STRATA_V1511_BASE_RENDER_BUILDER();
+  if (IS_DESKTOP_PAGE) {
+    const hero = view.querySelector(".builder-hero-v159");
+    if (hero && !hero.querySelector(".desktop-builder-page-actions")) {
+      hero.insertAdjacentHTML("beforeend", `<div class="desktop-builder-page-actions"><a class="secondary small" href="index.html">Open mobile app</a><button class="ghost small" data-route-jump="cardio" type="button">Cardio planner</button></div>`);
+      hero.querySelector("[data-route-jump='cardio']")?.addEventListener("click", () => setRoute("cardio"));
+    }
+  }
+};
+
+const STRATA_V1511_BASE_RENDER_ACCOUNT = renderAccount;
+renderAccount = function renderAccountV1511() {
+  STRATA_V1511_BASE_RENDER_ACCOUNT();
+  if (IS_MOBILE_PAGE) {
+    const firstCard = view.querySelector(".account-hero, .card");
+    const card = document.createElement("section");
+    card.className = "card desktop-separation-note";
+    card.innerHTML = `<p class="label">Desktop page</p><h3>Builder is separate now</h3><p class="muted">Mobile is for training, cardio logging and sync. Programme building opens on its own desktop page.</p><a class="secondary full" href="desktop.html">Open desktop builder</a>`;
+    if (firstCard) firstCard.insertAdjacentElement("afterend", card);
+    else view.appendChild(card);
+  }
+};
+
+const STRATA_V1511_BASE_INITIALIZE_APP = initializeApp;
+initializeApp = async function initializeAppV1511() {
+  installShellLinks();
+  await STRATA_V1511_BASE_INITIALIZE_APP();
+  document.body.classList.toggle("desktop-shell", IS_DESKTOP_PAGE);
+  document.body.classList.toggle("mobile-shell", IS_MOBILE_PAGE);
+};
+
 async function initializeApp() {
   normalizeExistingData();
   try {
@@ -4011,3 +4621,1332 @@ async function initializeApp() {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
 initializeApp();
+
+
+/* =========================================================
+   STRATA v1.5.7 — Visual-first past-workout redesign
+   Scope: redesign workout complete / past-workout readout with brighter colours,
+   compact summary, body-map hybrid and more glanceable exercise cards.
+   ========================================================= */
+
+function reportHeatToneFromRpe(avgRpe) {
+  if (!Number.isFinite(avgRpe)) return "missing";
+  if (avgRpe < 7) return "blue";
+  if (avgRpe < 8) return "green";
+  if (avgRpe < 8.75) return "yellow";
+  if (avgRpe < 9.25) return "orange";
+  return "red";
+}
+
+function reportIntensityText(avgRpe) {
+  if (!Number.isFinite(avgRpe)) return "Effort missing";
+  if (avgRpe < 7) return "Light";
+  if (avgRpe < 8) return "Moderate";
+  if (avgRpe < 8.75) return "Hard";
+  if (avgRpe < 9.25) return "Very hard";
+  return "Near limit";
+}
+
+function volumeBandText(sets) {
+  if (!sets) return "No work";
+  if (sets <= 2) return "Low volume";
+  if (sets <= 4) return "Moderate volume";
+  if (sets <= 6) return "Solid volume";
+  return "High volume";
+}
+
+function muscleSignalChip(item) {
+  if (!item.sets) return "No signal";
+  if (item.avgRpe === null) return "Log effort";
+  if (item.sets <= 2 && item.avgRpe >= 9) return "High effort";
+  if (item.sets >= 4 && item.avgRpe >= 8.5) return "Balanced";
+  if (item.sets >= 4 && item.avgRpe < 8) return "Volume-led";
+  if (item.avgRpe >= 9) return "Very hard";
+  return "Solid";
+}
+
+function compactSetTrack(log) {
+  const sets = workingSetsForProgression(log).filter((set) => set.setType !== "drop");
+  return sets.length ? sets.map((set) => `${set.weight || "—"}×${set.reps || "—"}`).join(" / ") : "No work sets";
+}
+
+function exerciseStatusMeta(result) {
+  if (result.tone === "positive") return { icon: "⬆", label: "Progressed", className: "positive" };
+  if (result.tone === "negative") return { icon: "⬇", label: "Below last", className: "negative" };
+  return { icon: "—", label: result.label.includes("First") ? "Baseline" : "Held", className: "neutral" };
+}
+
+function pbCountForRows(rows) {
+  return rows.reduce((sum, row) => sum + row.badges.filter((badge) => badge !== "Baseline").length, 0);
+}
+
+function topEffortMuscle(muscles) {
+  return [...muscles].sort((a, b) => (b.avgRpe || 0) - (a.avgRpe || 0) || b.sets - a.sets)[0] || null;
+}
+
+function sessionTakeaways(session, rows, muscles) {
+  const pbCount = pbCountForRows(rows);
+  const progressed = rows.filter((row) => row.result.tone === "positive").length;
+  const ready = rows.filter((row) => row.dp.ready).length;
+  const hardMuscle = topEffortMuscle(muscles);
+  const notes = [
+    { icon: "★", label: `${pbCount} PB${pbCount === 1 ? "" : "s"}`, tone: pbCount ? "gold" : "neutral" },
+    { icon: "⬆", label: `${progressed} progressed`, tone: progressed ? "green" : "neutral" },
+    { icon: "🎯", label: `${ready} ready to load`, tone: ready ? "blue" : "neutral" },
+    { icon: "🔥", label: hardMuscle ? `${hardMuscle.muscle} highest effort` : "No effort signal", tone: hardMuscle ? reportHeatToneFromRpe(hardMuscle.avgRpe) : "neutral" }
+  ];
+  return notes;
+}
+
+const BODY_MAP_ZONE_RULES = {
+  "Chest": ["chest"],
+  "Back": ["upper-back", "lats"],
+  "Shoulders": ["front-delts", "rear-delts"],
+  "Side delts": ["front-delts", "rear-delts"],
+  "Biceps": ["biceps"],
+  "Triceps": ["triceps"],
+  "Quads": ["quads"],
+  "Hamstrings": ["hamstrings"],
+  "Glutes": ["glutes"],
+  "Glutes / legs": ["quads", "glutes"],
+  "Calves": ["calves"],
+  "Posterior chain": ["upper-back", "glutes", "hamstrings", "calves"]
+};
+
+function bodyMapHeat(muscles) {
+  const map = new Map();
+  muscles.forEach((item) => {
+    const tone = reportHeatToneFromRpe(item.avgRpe);
+    const score = Number(item.avgRpe || 0) * 10 + item.sets;
+    const zones = BODY_MAP_ZONE_RULES[item.muscle] || [];
+    zones.forEach((zone) => {
+      const current = map.get(zone);
+      if (!current || score > current.score) map.set(zone, { tone, score, muscle: item.muscle });
+    });
+  });
+  return map;
+}
+
+function renderBodyFigure(face, heatMap) {
+  const zone = (name, label='') => {
+    const hit = heatMap.get(name);
+    return `<span class="body-zone zone-${name} ${hit ? `heat-${hit.tone}` : "heat-none"}" title="${escapeHtml(label || hit?.muscle || name)}"></span>`;
+  };
+  return `<div class="body-figure ${face}">
+    <div class="body-head"></div>
+    <div class="body-torso">
+      ${face === "front" ? zone("front-delts", "Shoulders") : zone("rear-delts", "Shoulders")}
+      ${face === "front" ? zone("chest", "Chest") : zone("upper-back", "Back")}
+      ${face === "front" ? zone("biceps", "Biceps") : zone("triceps", "Triceps")}
+      ${face === "front" ? zone("quads", "Quads") : zone("glutes", "Glutes")}
+      ${face === "front" ? "" : zone("lats", "Back")}
+      ${face === "front" ? "" : zone("hamstrings", "Hamstrings")}
+      ${zone("calves", "Calves")}
+    </div>
+    <span class="body-caption">${face}</span>
+  </div>`;
+}
+
+function renderStimulusHybrid(muscles) {
+  const heatMap = bodyMapHeat(muscles);
+  const maxSets = Math.max(1, ...muscles.map((item) => item.sets || 0));
+  return `<section class="past-stimulus-v157">
+    <header><span>Stimulus map</span><strong>Glance first. Read second.</strong></header>
+    <div class="stimulus-hybrid-v157">
+      <div class="body-map-board">
+        <div class="body-map-board-head"><b>Body map</b><small>Colour = effort · Bar = volume</small></div>
+        <div class="body-map-figures">${renderBodyFigure("front", heatMap)}${renderBodyFigure("back", heatMap)}</div>
+        <div class="body-map-legend">
+          <span class="heat-blue">Blue</span>
+          <span class="heat-green">Green</span>
+          <span class="heat-yellow">Yellow</span>
+          <span class="heat-orange">Orange</span>
+          <span class="heat-red">Red</span>
+        </div>
+      </div>
+      <div class="muscle-glance-list">
+        ${muscles.map((item) => {
+          const heat = reportHeatToneFromRpe(item.avgRpe);
+          const width = Math.max(18, Math.round((item.sets / maxSets) * 100));
+          return `<article class="muscle-glance-card heat-${escapeHtml(heat)}">
+            <div class="muscle-glance-top"><h3>${escapeHtml(item.muscle)}</h3><div class="muscle-chip-row"><span class="mini-chip neutral">${item.sets} set${item.sets === 1 ? "" : "s"}</span><span class="mini-chip heat-${escapeHtml(heat)}">${escapeHtml(reportIntensityText(item.avgRpe))}</span></div></div>
+            <div class="glance-bar"><span class="heat-${escapeHtml(heat)}" style="width:${width}%"></span></div>
+            <div class="muscle-glance-meta"><span>${escapeHtml(item.primaryRange)} focus</span><span>${item.avgRpe !== null ? `RPE ${item.avgRpe.toFixed(1)}` : "RPE —"}</span><span>${escapeHtml(volumeBandText(item.sets))}</span></div>
+            <div class="muscle-glance-signal"><i class="signal-dot heat-${escapeHtml(heat)}"></i><strong>${escapeHtml(muscleSignalChip(item))}</strong></div>
+          </article>`;
+        }).join("") || `<p class="muted">No hard-set muscle stimulus recorded.</p>`}
+      </div>
+    </div>
+  </section>`;
+}
+
+function renderExerciseCardsV157(rows) {
+  return `<section class="exercise-report-v157">
+    <header><span>Exercise report</span><strong>Volume, PBs and next-time actions</strong></header>
+    <div class="exercise-card-stack">${rows.map(({ log, previousLog, result, volumeDelta, dp, badges }) => {
+      const stateMeta = exerciseStatusMeta(result);
+      const pbBadges = badges.filter((badge) => badge !== "Baseline");
+      return `<article class="exercise-card-v157 state-${escapeHtml(stateMeta.className)} ${dp.ready ? "ready" : ""}">
+        <div class="exercise-card-topline">
+          <div>
+            <div class="exercise-name-line"><span class="status-badge ${escapeHtml(stateMeta.className)}">${escapeHtml(stateMeta.icon)} ${escapeHtml(stateMeta.label)}</span><h3>${escapeHtml(log.name)}</h3></div>
+            <p>${escapeHtml(log.muscle || "Other")}</p>
+          </div>
+          <span class="volume-delta-pill ${volumeDelta.delta >= 0 ? "positive" : "negative"}">${escapeHtml(volumeDelta.text)}</span>
+        </div>
+        <div class="exercise-snapshot-grid">
+          <div><span>Today</span><strong>${escapeHtml(compactSetTrack(log))}</strong></div>
+          <div><span>Last</span><strong>${escapeHtml(previousLog ? compactSetTrack(previousLog) : "Baseline")}</strong></div>
+          <div><span>Best set</span><strong>${escapeHtml(bestSetText(log))}</strong></div>
+        </div>
+        <div class="exercise-card-footer">
+          <div class="badge-cluster">${pbBadges.map((badge) => `<span class="mini-chip gold">★ ${escapeHtml(badge)}</span>`).join("") || `<span class="mini-chip neutral">Baseline</span>`}</div>
+          <span class="action-pill ${dp.ready ? "ready" : "hold"}">🎯 ${escapeHtml(dp.ready ? "Increase load next time" : dp.label)}</span>
+        </div>
+      </article>`;
+    }).join("")}</div>
+  </section>`;
+}
+
+const STRATA_V157_BASE_RENDER_WORKOUT_COMPLETE = renderWorkoutComplete;
+renderWorkoutComplete = function renderWorkoutCompleteV157(session) {
+  const workout = PROGRAM[session.workoutId];
+  const volume = calcSessionVolume(session);
+  const delta = volume - (session.previousVolume || 0);
+  const duration = formatDurationCompact(session.startedAt, session.completedAt);
+  const averageRpe = sessionAverageRpe(session);
+  const muscles = sessionMuscleStimulusSummary(session).map((item) => ({
+    ...item,
+    intensity: reportIntensityText(item.avgRpe),
+    intensityTone: reportHeatToneFromRpe(item.avgRpe)
+  }));
+  const exerciseRows = session.logs.map((log) => {
+    const previousLog = exerciseHistoryEntries(log).find(({ session: item }) => item.id !== session.id && String(item.completedAt || "") < session.completedAt)?.log || null;
+    const result = matchedProgress(log, previousLog);
+    const volumeDelta = exerciseVolumeDeltaText(log, previousLog);
+    const dp = doubleProgressionSignal(log);
+    const badges = exercisePbBadges(log, session);
+    return { log, previousLog, result, volumeDelta, dp, badges };
+  });
+  const takeaways = sessionTakeaways(session, exerciseRows, muscles);
+  document.body.classList.remove("workout-mode");
+  stopSessionClock();
+  pageTitle.textContent = "Workout Complete";
+  view.innerHTML = `
+    <section class="completion-hero gym-door-hero v157-hero">
+      <div class="report-kicker-row"><span>Past workout</span><strong>${escapeHtml(niceDate(session.date))}</strong></div>
+      <h2>${escapeHtml(sessionTitle(session))}</h2>
+      <div class="summary-strip-v157">
+        <article><small>⏱ Time</small><strong>${escapeHtml(duration.value)}</strong></article>
+        <article><small>🏋 Hard sets</small><strong>${countHardSets(session)}</strong></article>
+        <article><small>⬆ Volume</small><strong>${delta >= 0 ? "+" : ""}${kg(delta)} kg</strong></article>
+        <article><small>★ PBs</small><strong>${pbCountForRows(exerciseRows)}</strong></article>
+      </div>
+      <div class="takeaway-row-v157">
+        ${takeaways.map((item) => `<span class="takeaway-pill ${escapeHtml(item.tone)}">${escapeHtml(item.icon)} ${escapeHtml(item.label)}</span>`).join("")}
+      </div>
+      <div class="micro-summary-v157"><span>${kg(volume)} kg total volume</span><span>${averageRpe !== null ? `RPE ${averageRpe.toFixed(1)} avg effort` : "No average effort yet"}</span></div>
+    </section>
+    ${renderStimulusHybrid(muscles)}
+    ${renderExerciseCardsV157(exerciseRows)}
+    <section class="next-actions-v157">
+      <header><span>Next time</span><strong>Action list for the next repeat session</strong></header>
+      <div class="takeaway-grid-v157">${exerciseRows.map((row) => `<article class="mini-action-card ${row.dp.ready ? "ready" : "hold"}"><h3>${escapeHtml(row.log.name)}</h3><p>${escapeHtml(row.dp.ready ? "Increase load next time" : row.dp.label)}</p></article>`).join("")}</div>
+    </section>
+    <button class="primary full" data-route-jump="today" type="button">Return to Today</button>
+  `;
+  attachCommonHandlers();
+  view.querySelector("[data-route-jump]")?.addEventListener("click", () => setRoute("today"));
+};
+
+/* =========================================================
+   STRATA v1.5.8 — Cardio module outside workout logging
+   Scope: separate cardio section for mobile execution and desktop planning.
+   ========================================================= */
+
+ROUTE_TITLES.cardio = "Cardio";
+
+const DEFAULT_CARDIO_TEMPLATES = [
+  {
+    id: "incline-treadmill-zone-2",
+    title: "Incline Treadmill Zone 2",
+    modality: "Treadmill",
+    duration: 30,
+    targetHr: "120–140 bpm",
+    intensity: "Zone 2 / conversational",
+    incline: "8–12%",
+    speed: "Fast walk",
+    phase: "Cut / maintenance",
+    instructions: "Steady pace. Keep breathing controlled. Adjust speed before forcing the incline higher."
+  },
+  {
+    id: "post-lift-bike-easy",
+    title: "Post-Lift Easy Bike",
+    modality: "Bike",
+    duration: 20,
+    targetHr: "115–135 bpm",
+    intensity: "Easy aerobic",
+    incline: "—",
+    speed: "Comfortable cadence",
+    phase: "Any phase",
+    instructions: "Keep legs moving. This should not interfere with recovery from lifting."
+  },
+  {
+    id: "stairmaster-moderate",
+    title: "StairMaster Moderate",
+    modality: "StairMaster",
+    duration: 20,
+    targetHr: "130–150 bpm",
+    intensity: "Moderate / controlled",
+    incline: "Level 5–8",
+    speed: "No handrail leaning",
+    phase: "Cut",
+    instructions: "Stay tall. Use the rails lightly only for balance. Stop if form collapses."
+  },
+  {
+    id: "cut-phase-treadmill",
+    title: "Cut Phase Treadmill",
+    modality: "Treadmill",
+    duration: 40,
+    targetHr: "120–140 bpm",
+    intensity: "Low impact steady state",
+    incline: "4–8%",
+    speed: "Brisk walk",
+    phase: "Cut",
+    instructions: "Accumulate time without turning it into a second leg workout. Keep it repeatable."
+  },
+  {
+    id: "peak-week-light-walk",
+    title: "Peak Week Light Walk",
+    modality: "Walk / treadmill",
+    duration: 20,
+    targetHr: "110–125 bpm",
+    intensity: "Light movement",
+    incline: "0–4%",
+    speed: "Easy walk",
+    phase: "Peak week",
+    instructions: "Light movement only. This is for routine and recovery, not hard conditioning."
+  }
+];
+
+function ensureCardioState() {
+  state.cardio = state.cardio || {};
+  state.cardio.sessions = Array.isArray(state.cardio.sessions) ? state.cardio.sessions : [];
+  state.cardio.prescriptions = Array.isArray(state.cardio.prescriptions) ? state.cardio.prescriptions : [];
+  state.cardio.templates = Array.isArray(state.cardio.templates) && state.cardio.templates.length ? state.cardio.templates : DEFAULT_CARDIO_TEMPLATES.map((item) => ({ ...item }));
+  return state.cardio;
+}
+
+ensureCardioState();
+
+const STRATA_V158_BASE_NORMALIZE = normalizeExistingData;
+normalizeExistingData = function normalizeExistingDataV158() {
+  STRATA_V158_BASE_NORMALIZE();
+  ensureCardioState();
+};
+
+const STRATA_V158_BASE_MERGE_CLOUD = mergeCloudState;
+mergeCloudState = function mergeCloudStateV158(incoming) {
+  STRATA_V158_BASE_MERGE_CLOUD(incoming);
+  ensureCardioState();
+  const incomingCardio = incoming?.cardio || {};
+  const sessionMap = new Map((state.cardio.sessions || []).map((item) => [item.id, item]));
+  (incomingCardio.sessions || []).forEach((item) => {
+    const existing = sessionMap.get(item.id);
+    if (!existing || String(item.updatedAt || item.completedAt || item.createdAt || "") > String(existing.updatedAt || existing.completedAt || existing.createdAt || "")) {
+      sessionMap.set(item.id, item);
+    }
+  });
+  state.cardio.sessions = [...sessionMap.values()].sort((a, b) => String(b.completedAt || b.date || "").localeCompare(String(a.completedAt || a.date || "")));
+  const prescriptionMap = new Map((state.cardio.prescriptions || []).map((item) => [item.id, item]));
+  (incomingCardio.prescriptions || []).forEach((item) => {
+    if (!prescriptionMap.has(item.id)) prescriptionMap.set(item.id, item);
+  });
+  state.cardio.prescriptions = [...prescriptionMap.values()];
+  const templateMap = new Map([...(DEFAULT_CARDIO_TEMPLATES || []), ...(incomingCardio.templates || []), ...(state.cardio.templates || [])].map((item) => [item.id || item.title, item]));
+  state.cardio.templates = [...templateMap.values()];
+};
+
+const STRATA_V158_BASE_CLOUD_SUMMARY = cloudBackupSummary;
+cloudBackupSummary = function cloudBackupSummaryV158(safeState) {
+  const summary = STRATA_V158_BASE_CLOUD_SUMMARY(safeState);
+  summary.cardioSessionCount = safeState.cardio?.sessions?.length || 0;
+  summary.cardioPrescriptionCount = safeState.cardio?.prescriptions?.length || 0;
+  return summary;
+};
+
+function cardioSessionsSorted() {
+  ensureCardioState();
+  return [...state.cardio.sessions].sort((a, b) => String(b.completedAt || b.date || "").localeCompare(String(a.completedAt || a.date || "")));
+}
+
+function cardioWeekStats() {
+  const start = currentWeekStartISO();
+  const sessions = cardioSessionsSorted().filter((item) => String(item.date || "") >= start);
+  const minutes = sessions.reduce((sum, item) => sum + Number(item.duration || 0), 0);
+  const hrValues = sessions.map((item) => Number(item.avgHr || 0)).filter(Boolean);
+  const avgHr = hrValues.length ? Math.round(hrValues.reduce((sum, value) => sum + value, 0) / hrValues.length) : null;
+  const byModality = sessions.reduce((map, item) => {
+    const key = item.modality || "Cardio";
+    map[key] = (map[key] || 0) + Number(item.duration || 0);
+    return map;
+  }, {});
+  return { sessions, minutes, avgHr, byModality };
+}
+
+function cardioTemplateById(id) {
+  ensureCardioState();
+  return [...state.cardio.templates, ...state.cardio.prescriptions].find((item) => item.id === id) || null;
+}
+
+function phaseChipTone(phase) {
+  const text = String(phase || "").toLowerCase();
+  if (text.includes("cut")) return "orange";
+  if (text.includes("peak")) return "red";
+  if (text.includes("bulk") || text.includes("growth")) return "green";
+  return "blue";
+}
+
+function renderCardioTemplateCard(item, source = "template") {
+  const tone = phaseChipTone(item.phase);
+  return `<article class="cardio-template-card">
+    <div class="cardio-template-head"><div><span class="takeaway-pill ${escapeHtml(tone)}">${escapeHtml(item.phase || "Any phase")}</span><h3>${escapeHtml(item.title)}</h3></div><strong>${Number(item.duration || 0) || "—"} min</strong></div>
+    <div class="cardio-instruction-grid">
+      <span><b>Mode</b>${escapeHtml(item.modality || "Cardio")}</span>
+      <span><b>Heart rate</b>${escapeHtml(item.targetHr || "Set target")}</span>
+      <span><b>Incline / level</b>${escapeHtml(item.incline || "—")}</span>
+      <span><b>Speed</b>${escapeHtml(item.speed || "—")}</span>
+    </div>
+    <p>${escapeHtml(item.instructions || "")}</p>
+    <div class="button-row"><button class="primary small" data-action="use-cardio-template" data-cardio-id="${escapeHtml(item.id)}" data-cardio-source="${escapeHtml(source)}" type="button">Use this</button><button class="ghost small" data-action="start-cardio-template" data-cardio-id="${escapeHtml(item.id)}" type="button">Quick log</button></div>
+  </article>`;
+}
+
+function renderCardioSessionRow(item) {
+  const hr = item.avgHr ? ` · avg ${item.avgHr} bpm` : "";
+  const max = item.maxHr ? ` · max ${item.maxHr}` : "";
+  const incline = item.incline ? ` · ${item.incline}` : "";
+  return `<article class="cardio-session-row">
+    <div><span>${escapeHtml(niceDate(item.date))}</span><h3>${escapeHtml(item.title || item.modality || "Cardio")}</h3><p>${escapeHtml(item.modality || "Cardio")} · ${Number(item.duration || 0)} min${escapeHtml(hr)}${escapeHtml(max)}${escapeHtml(incline)}</p></div>
+    <div><strong>${item.rpe ? `RPE ${escapeHtml(String(item.rpe))}` : "—"}</strong><button class="ghost tiny" data-action="delete-cardio-session" data-cardio-id="${escapeHtml(item.id)}" type="button">Delete</button></div>
+  </article>`;
+}
+
+function renderCardioPrescriptionRow(item) {
+  const tone = phaseChipTone(item.phase);
+  return `<article class="cardio-prescription-row">
+    <div><span class="takeaway-pill ${escapeHtml(tone)}">${escapeHtml(item.phase || "Any phase")}</span><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.frequency || "")}${item.frequency ? " · " : ""}${Number(item.duration || 0) || "—"} min · ${escapeHtml(item.targetHr || "HR target not set")}</p></div>
+    <div class="button-row"><button class="secondary small" data-action="use-cardio-template" data-cardio-id="${escapeHtml(item.id)}" data-cardio-source="prescription" type="button">Use</button><button class="ghost small" data-action="delete-cardio-prescription" data-cardio-id="${escapeHtml(item.id)}" type="button">Remove</button></div>
+  </article>`;
+}
+
+function renderCardio() {
+  ensureCardioState();
+  pageTitle.textContent = "Cardio";
+  const week = cardioWeekStats();
+  const recent = cardioSessionsSorted().slice(0, 8);
+  const last = recent[0];
+  view.innerHTML = `
+    <section class="cardio-hero-v158">
+      <div><span>OUTSIDE THE WORKOUT</span><h2>Cardio prescriptions and logs.</h2><p>Track time, heart rate and machine instructions without mixing it into lifting volume.</p></div>
+      <div class="cardio-week-ring"><strong>${week.minutes}</strong><span>min this week</span></div>
+    </section>
+
+    <section class="cardio-stat-strip">
+      <article><small>Sessions</small><strong>${week.sessions.length}</strong></article>
+      <article><small>Avg HR</small><strong>${week.avgHr ? `${week.avgHr}` : "—"}</strong></article>
+      <article><small>Last</small><strong>${last ? `${Number(last.duration || 0)}m` : "—"}</strong></article>
+    </section>
+
+    <section class="cardio-layout-v158">
+      <form id="cardio-log-form" class="card cardio-log-card">
+        <p class="label">Log cardio</p>
+        <h3>Session details</h3>
+        <div class="form-grid">
+          <label class="field form-span-2"><span>Session name</span><input name="title" type="text" placeholder="e.g. Incline treadmill" autocomplete="off" /></label>
+          <label class="field"><span>Date</span><input name="date" type="date" value="${todayISO()}" /></label>
+          <label class="field"><span>Mode</span><select name="modality">
+            <option>Treadmill</option><option>Bike</option><option>StairMaster</option><option>Outdoor walk</option><option>Elliptical</option><option>Rower</option><option>Other</option>
+          </select></label>
+          <label class="field"><span>Time</span><input name="duration" type="number" inputmode="numeric" min="1" max="240" placeholder="30" required /></label>
+          <label class="field"><span>Avg heart rate</span><input name="avgHr" type="number" inputmode="numeric" min="40" max="230" placeholder="135" /></label>
+          <label class="field"><span>Max heart rate</span><input name="maxHr" type="number" inputmode="numeric" min="40" max="240" placeholder="155" /></label>
+          <label class="field"><span>RPE</span><select name="rpe"><option value="">Not logged</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
+          <label class="field"><span>Incline / level</span><input name="incline" type="text" placeholder="8% or level 6" /></label>
+          <label class="field"><span>Speed / pace</span><input name="speed" type="text" placeholder="5.5 km/h" /></label>
+          <label class="field"><span>Distance</span><input name="distance" type="text" placeholder="optional" /></label>
+          <label class="field form-span-2"><span>Instructions / notes</span><textarea name="instructions" rows="3" placeholder="Target HR, incline, machine level, form notes..."></textarea></label>
+        </div>
+        <button class="primary full" type="submit">Save cardio session</button>
+      </form>
+
+      <section class="desktop-cardio-builder card">
+        <div class="section-title-row"><div><p class="label">Desktop planner</p><h3>Cardio prescription builder</h3></div><strong>Block / phase ready</strong></div>
+        <form id="cardio-prescription-form" class="form-grid">
+          <label class="field form-span-2"><span>Prescription name</span><input name="title" type="text" placeholder="e.g. Cut phase incline walk" required /></label>
+          <label class="field"><span>Phase</span><select name="phase"><option>Bulk / growth</option><option>Cut</option><option>Maintenance</option><option>Peak week</option><option>Any phase</option></select></label>
+          <label class="field"><span>Mode</span><select name="modality"><option>Treadmill</option><option>Bike</option><option>StairMaster</option><option>Outdoor walk</option><option>Elliptical</option><option>Other</option></select></label>
+          <label class="field"><span>Time</span><input name="duration" type="number" min="1" max="240" placeholder="30" required /></label>
+          <label class="field"><span>Frequency</span><input name="frequency" type="text" placeholder="3× / week" /></label>
+          <label class="field"><span>Target HR</span><input name="targetHr" type="text" placeholder="120–140 bpm" /></label>
+          <label class="field"><span>Incline / level</span><input name="incline" type="text" placeholder="8–12%" /></label>
+          <label class="field"><span>Speed / pace</span><input name="speed" type="text" placeholder="fast walk" /></label>
+          <label class="field form-span-2"><span>Instructions</span><textarea name="instructions" rows="3" placeholder="What the athlete should do, how hard it should feel, machine setup..."></textarea></label>
+          <button class="secondary full form-span-2" type="submit">Save prescription</button>
+        </form>
+      </section>
+    </section>
+
+    <section class="cardio-library-v158">
+      <header><span>Cardio library</span><strong>Preloaded semi-pro prescriptions</strong></header>
+      <div class="cardio-template-grid">${state.cardio.templates.map((item) => renderCardioTemplateCard(item, "template")).join("")}</div>
+    </section>
+
+    <section class="card cardio-prescriptions-panel">
+      <div class="section-title-row"><div><p class="label">Saved prescriptions</p><h3>Desktop-built cardio blocks</h3></div><strong>${state.cardio.prescriptions.length}</strong></div>
+      <div class="cardio-list-stack">${state.cardio.prescriptions.map(renderCardioPrescriptionRow).join("") || `<p class="muted">No custom cardio prescriptions yet.</p>`}</div>
+    </section>
+
+    <section class="card cardio-history-panel">
+      <div class="section-title-row"><div><p class="label">Cardio history</p><h3>Separate from lifting workouts</h3></div><strong>${state.cardio.sessions.length}</strong></div>
+      <div class="cardio-list-stack">${recent.map(renderCardioSessionRow).join("") || `<p class="muted">No cardio logged yet.</p>`}</div>
+    </section>
+  `;
+  attachCommonHandlers();
+  attachCardioHandlers();
+}
+
+function fillCardioFormFrom(item) {
+  const form = document.querySelector("#cardio-log-form");
+  if (!form || !item) return;
+  form.title.value = item.title || "";
+  form.modality.value = item.modality || "Treadmill";
+  form.duration.value = item.duration || "";
+  form.incline.value = item.incline || "";
+  form.speed.value = item.speed || "";
+  form.instructions.value = [item.targetHr ? `Target HR: ${item.targetHr}` : "", item.intensity ? `Intensity: ${item.intensity}` : "", item.instructions || ""].filter(Boolean).join("\n");
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function saveCardioSession(data) {
+  ensureCardioState();
+  const session = {
+    id: uid(),
+    title: data.get("title")?.toString().trim() || data.get("modality")?.toString() || "Cardio",
+    date: data.get("date")?.toString() || todayISO(),
+    modality: data.get("modality")?.toString() || "Cardio",
+    duration: Number(data.get("duration") || 0),
+    avgHr: data.get("avgHr") ? Number(data.get("avgHr")) : null,
+    maxHr: data.get("maxHr") ? Number(data.get("maxHr")) : null,
+    rpe: data.get("rpe")?.toString() || "",
+    incline: data.get("incline")?.toString().trim() || "",
+    speed: data.get("speed")?.toString().trim() || "",
+    distance: data.get("distance")?.toString().trim() || "",
+    instructions: data.get("instructions")?.toString().trim() || "",
+    completedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  if (!session.duration) {
+    showNotice("Add cardio time before saving.", "warn");
+    return;
+  }
+  state.cardio.sessions.push(session);
+  saveState();
+  queueCloudBackup({ delay: 900 });
+  showNotice("Cardio session saved.", "good");
+  renderCardio();
+}
+
+function saveCardioPrescription(data) {
+  ensureCardioState();
+  const item = {
+    id: uid(),
+    title: data.get("title")?.toString().trim() || "Cardio prescription",
+    phase: data.get("phase")?.toString() || "Any phase",
+    modality: data.get("modality")?.toString() || "Cardio",
+    duration: Number(data.get("duration") || 0),
+    frequency: data.get("frequency")?.toString().trim() || "",
+    targetHr: data.get("targetHr")?.toString().trim() || "",
+    incline: data.get("incline")?.toString().trim() || "",
+    speed: data.get("speed")?.toString().trim() || "",
+    instructions: data.get("instructions")?.toString().trim() || "",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  if (!item.duration) {
+    showNotice("Add a time target before saving the prescription.", "warn");
+    return;
+  }
+  state.cardio.prescriptions.push(item);
+  saveState();
+  queueCloudBackup({ delay: 900 });
+  showNotice("Cardio prescription saved.", "good");
+  renderCardio();
+}
+
+function quickLogCardioFrom(item) {
+  if (!item) return;
+  ensureCardioState();
+  state.cardio.sessions.push({
+    id: uid(),
+    title: item.title || item.modality || "Cardio",
+    date: todayISO(),
+    modality: item.modality || "Cardio",
+    duration: Number(item.duration || 0),
+    avgHr: null,
+    maxHr: null,
+    rpe: "",
+    incline: item.incline || "",
+    speed: item.speed || "",
+    distance: "",
+    instructions: [item.targetHr ? `Target HR: ${item.targetHr}` : "", item.instructions || ""].filter(Boolean).join("\n"),
+    completedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    sourceId: item.id
+  });
+  saveState();
+  queueCloudBackup({ delay: 900 });
+  showNotice("Cardio quick log saved. Edit details later if needed.", "good");
+  renderCardio();
+}
+
+function attachCardioHandlers() {
+  const logForm = document.querySelector("#cardio-log-form");
+  logForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveCardioSession(new FormData(logForm));
+  });
+  const prescriptionForm = document.querySelector("#cardio-prescription-form");
+  prescriptionForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveCardioPrescription(new FormData(prescriptionForm));
+  });
+  view.querySelectorAll("[data-action='use-cardio-template']").forEach((button) => button.addEventListener("click", () => fillCardioFormFrom(cardioTemplateById(button.dataset.cardioId))));
+  view.querySelectorAll("[data-action='start-cardio-template']").forEach((button) => button.addEventListener("click", () => quickLogCardioFrom(cardioTemplateById(button.dataset.cardioId))));
+  view.querySelectorAll("[data-action='delete-cardio-session']").forEach((button) => button.addEventListener("click", () => {
+    if (!confirm("Delete this cardio session?")) return;
+    state.cardio.sessions = (state.cardio.sessions || []).filter((item) => item.id !== button.dataset.cardioId);
+    saveState();
+    queueCloudBackup({ delay: 900 });
+    renderCardio();
+  }));
+  view.querySelectorAll("[data-action='delete-cardio-prescription']").forEach((button) => button.addEventListener("click", () => {
+    if (!confirm("Remove this cardio prescription?")) return;
+    state.cardio.prescriptions = (state.cardio.prescriptions || []).filter((item) => item.id !== button.dataset.cardioId);
+    saveState();
+    queueCloudBackup({ delay: 900 });
+    renderCardio();
+  }));
+}
+
+function injectCardioTodayCard() {
+  if (view.querySelector("[data-cardio-today-card]")) return;
+  const anchor = view.querySelector(".active-session-card") || view.firstElementChild;
+  const week = cardioWeekStats();
+  const card = document.createElement("section");
+  card.className = "card cardio-today-card";
+  card.setAttribute("data-cardio-today-card", "true");
+  card.innerHTML = `<p class="label">Cardio</p><h3>Separate from workouts</h3><p class="muted">${week.minutes} minutes logged this week${week.avgHr ? ` · avg HR ${week.avgHr}` : ""}.</p><button class="secondary full" data-route-jump="cardio" type="button">Open cardio</button>`;
+  if (anchor) anchor.insertAdjacentElement("afterend", card);
+  else view.appendChild(card);
+  card.querySelector("[data-route-jump='cardio']")?.addEventListener("click", () => setRoute("cardio"));
+}
+
+const STRATA_V158_BASE_RENDER = render;
+render = function renderV158() {
+  if (route === "cardio") return renderCardio();
+  return STRATA_V158_BASE_RENDER();
+};
+
+const STRATA_V158_BASE_RENDER_TODAY = renderToday;
+renderToday = function renderTodayV158() {
+  STRATA_V158_BASE_RENDER_TODAY();
+  injectCardioTodayCard();
+};
+
+// Upgrade older installed markup without requiring index.html to be refreshed first.
+const oldPhysiqueNav = document.querySelector(".bottom-nav [data-route='physique']");
+if (oldPhysiqueNav) {
+  oldPhysiqueNav.dataset.route = "cardio";
+  oldPhysiqueNav.textContent = "Cardio";
+}
+navButtons.splice(0, navButtons.length, ...Array.from(document.querySelectorAll(".nav-item")));
+navButtons.forEach((button) => {
+  if (!button.dataset.cardioNavBound) {
+    button.dataset.cardioNavBound = "true";
+    button.addEventListener("click", () => setRoute(button.dataset.route));
+  }
+});
+if (route === "today") renderToday();
+
+
+/* =========================================================
+   STRATA v1.5.10 — Builder Alignment Pass
+   Freeze rule: no new product features. The desktop builder now defines the
+   lifting fields the mobile app already executes: exercises, sets/reps, warmups,
+   rest, effort, progression, drops, load maths, muscle mapping and alternatives.
+   ========================================================= */
+
+ROUTE_TITLES.builder = "Builder";
+
+function safeClone(value) {
+  return JSON.parse(JSON.stringify(value || null));
+}
+
+function normalizeBuilderBlueprint(item = {}, fallbackIndex = 0) {
+  const type = item.type || "isolation";
+  const loadMode = item.loadMode || loadModeFromValues(item.loadLabel, item.loadMultiplier, item.repMultiplier, item.volumeMode, item.allowZeroWeight);
+  const volume = loadModeConfig(loadMode);
+  return {
+    exerciseId: item.exerciseId || item.id || `builder-ex-${fallbackIndex}-${uid()}`,
+    variantId: item.variantId || item.exerciseId || item.id || `builder-var-${fallbackIndex}-${uid()}`,
+    custom: item.custom !== false,
+    name: item.name || "Exercise",
+    muscle: item.muscle || item.primaryMuscle || "Other",
+    secondaryMuscles: item.secondaryMuscles || "",
+    type,
+    sets: Math.max(1, Math.min(12, Number(item.sets || item.targetSets || 3))),
+    reps: item.reps || item.targetReps || "8–12",
+    warmupCount: Number.isFinite(Number(item.warmupCount)) ? Math.max(0, Math.min(6, Number(item.warmupCount))) : defaultWarmupSetCount(type),
+    restSeconds: Number(item.restSeconds || defaultRestSeconds(type)),
+    effortTarget: item.effortTarget || "RPE 8–9",
+    progressionRule: item.progressionRule || "double_progression",
+    allowDropSet: Boolean(item.allowDropSet ?? item.plannedDrop ?? item.drop),
+    dropPercent: Number(item.dropPercent || 25),
+    loadMode,
+    loadLabel: item.loadLabel || volume.loadLabel || "kg",
+    loadMultiplier: Number(item.loadMultiplier || volume.loadMultiplier || 1),
+    repMultiplier: Number(item.repMultiplier || volume.repMultiplier || 1),
+    volumeMode: item.volumeMode || volume.volumeMode || "external",
+    allowZeroWeight: Boolean(item.allowZeroWeight ?? volume.allowZeroWeight),
+    cue: item.cue || item.mobileCue || "",
+    setupNote: item.setupNote || "",
+    alternatives: Array.isArray(item.alternatives) ? item.alternatives.join(", ") : (item.alternatives || "")
+  };
+}
+
+function builderWorkoutIds() {
+  return Object.keys(PROGRAM).filter((id) => id !== "adhoc");
+}
+
+function ensureBuilderState() {
+  state.builder = state.builder || {};
+  state.builder.selectedWorkoutId = state.builder.selectedWorkoutId || "upper";
+  state.builder.draftLayouts = state.builder.draftLayouts || {};
+  builderWorkoutIds().forEach((workoutId) => {
+    if (!Array.isArray(state.builder.draftLayouts[workoutId]) || !state.builder.draftLayouts[workoutId].length) {
+      state.builder.draftLayouts[workoutId] = getWorkoutBlueprints(workoutId).map(normalizeBuilderBlueprint);
+    } else {
+      state.builder.draftLayouts[workoutId] = state.builder.draftLayouts[workoutId].map(normalizeBuilderBlueprint);
+    }
+  });
+  return state.builder;
+}
+
+function builderSelectedWorkout() {
+  const builder = ensureBuilderState();
+  if (!builder.draftLayouts[builder.selectedWorkoutId]) builder.selectedWorkoutId = builderWorkoutIds()[0] || "upper";
+  return builder.selectedWorkoutId;
+}
+
+function builderDraftRows(workoutId = builderSelectedWorkout()) {
+  const builder = ensureBuilderState();
+  builder.draftLayouts[workoutId] = (builder.draftLayouts[workoutId] || []).map(normalizeBuilderBlueprint);
+  return builder.draftLayouts[workoutId];
+}
+
+function builderWorkoutTitle(workoutId) {
+  return PROGRAM[workoutId]?.title || workoutId;
+}
+
+function totalBuilderHardSets(rows) {
+  return (rows || []).reduce((sum, row) => sum + Number(row.sets || 0), 0);
+}
+
+function builderMuscleSummary(rows) {
+  const map = new Map();
+  (rows || []).forEach((row) => map.set(row.muscle || "Other", (map.get(row.muscle || "Other") || 0) + Number(row.sets || 0)));
+  return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([muscle, sets]) => `${muscle}: ${sets}`).join(" · ") || "No exercises";
+}
+
+function renderBuilderWorkoutTabs(selected) {
+  return builderWorkoutIds().map((workoutId) => {
+    const rows = builderDraftRows(workoutId);
+    return `<button class="builder-tab ${workoutId === selected ? "active" : ""}" data-action="builder-select-workout" data-workout-id="${escapeHtml(workoutId)}" type="button"><strong>${escapeHtml(builderWorkoutTitle(workoutId))}</strong><span>${rows.length} exercises · ${totalBuilderHardSets(rows)} sets</span></button>`;
+  }).join("");
+}
+
+function builderLoadModeOptions(value) {
+  const options = [
+    ["total", "Total load"],
+    ["pair", "Per hand / paired"],
+    ["perLeg", "Reps per leg"],
+    ["external", "External load only"],
+    ["bodyweightAdded", "Bodyweight + added load"]
+  ];
+  return options.map(([id, label]) => `<option value="${id}" ${id === value ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function builderTypeOptions(value) {
+  return ["compound", "machine", "isolation", "unilateral", "hinge", "accessory", "strength"].map((id) => `<option value="${id}" ${id === value ? "selected" : ""}>${id}</option>`).join("");
+}
+
+function builderProgressionOptions(value) {
+  const options = [
+    ["double_progression", "Double progression"],
+    ["rep_progression", "Rep progression"],
+    ["load_progression", "Load progression"],
+    ["maintain", "Maintain"],
+    ["custom", "Custom note"]
+  ];
+  return options.map(([id, label]) => `<option value="${id}" ${id === value ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function renderBuilderExerciseRow(row, index) {
+  return `<article class="builder-exercise-row" data-builder-row="${index}">
+    <div class="builder-row-head">
+      <span class="overview-index">${String(index + 1).padStart(2, "0")}</span>
+      <div><h3>${escapeHtml(row.name)}</h3><p>${escapeHtml(row.muscle)} · ${row.sets}×${escapeHtml(row.reps)} · ${row.restSeconds}s rest</p></div>
+      <div class="builder-row-actions">
+        <button class="ghost tiny" data-action="builder-move" data-index="${index}" data-dir="-1" type="button">↑</button>
+        <button class="ghost tiny" data-action="builder-move" data-index="${index}" data-dir="1" type="button">↓</button>
+        <button class="ghost tiny" data-action="builder-duplicate" data-index="${index}" type="button">Copy</button>
+        <button class="ghost tiny danger-text" data-action="builder-remove" data-index="${index}" type="button">Remove</button>
+      </div>
+    </div>
+    <div class="builder-grid">
+      <label class="field form-span-2"><span>Exercise</span><input data-builder-field="name" data-index="${index}" value="${escapeHtml(row.name)}" /></label>
+      <label class="field"><span>Primary muscle</span><input data-builder-field="muscle" data-index="${index}" value="${escapeHtml(row.muscle)}" /></label>
+      <label class="field"><span>Secondary</span><input data-builder-field="secondaryMuscles" data-index="${index}" value="${escapeHtml(row.secondaryMuscles || "")}" placeholder="optional" /></label>
+      <label class="field"><span>Type</span><select data-builder-field="type" data-index="${index}">${builderTypeOptions(row.type)}</select></label>
+      <label class="field"><span>Work sets</span><input data-builder-field="sets" data-index="${index}" type="number" min="1" max="12" value="${row.sets}" /></label>
+      <label class="field"><span>Rep range</span><input data-builder-field="reps" data-index="${index}" value="${escapeHtml(row.reps)}" /></label>
+      <label class="field"><span>Warm-ups</span><input data-builder-field="warmupCount" data-index="${index}" type="number" min="0" max="6" value="${row.warmupCount}" /></label>
+      <label class="field"><span>Rest seconds</span><input data-builder-field="restSeconds" data-index="${index}" type="number" min="30" max="300" step="15" value="${row.restSeconds}" /></label>
+      <label class="field"><span>Effort target</span><input data-builder-field="effortTarget" data-index="${index}" value="${escapeHtml(row.effortTarget)}" /></label>
+      <label class="field"><span>Progression</span><select data-builder-field="progressionRule" data-index="${index}">${builderProgressionOptions(row.progressionRule)}</select></label>
+      <label class="field"><span>Load format</span><select data-builder-field="loadMode" data-index="${index}">${builderLoadModeOptions(row.loadMode)}</select></label>
+      <label class="field checkbox-field"><span>Allow optional drop set</span><input data-builder-field="allowDropSet" data-index="${index}" type="checkbox" ${row.allowDropSet ? "checked" : ""} /></label>
+      <label class="field form-span-2"><span>Quick-swap alternatives</span><input data-builder-field="alternatives" data-index="${index}" value="${escapeHtml(row.alternatives || "")}" placeholder="Cable fly, Pec deck, Machine press" /></label>
+      <label class="field form-span-2"><span>Mobile cue</span><input data-builder-field="cue" data-index="${index}" value="${escapeHtml(row.cue || "")}" placeholder="Control negative. Stop before form breaks." /></label>
+      <label class="field form-span-2"><span>Setup note</span><input data-builder-field="setupNote" data-index="${index}" value="${escapeHtml(row.setupNote || "")}" placeholder="Seat 4, cable low, neutral grip" /></label>
+    </div>
+  </article>`;
+}
+
+function renderBuilder() {
+  ensureBuilderState();
+  const workoutId = builderSelectedWorkout();
+  const rows = builderDraftRows(workoutId);
+  const publishedRows = state.settings.workoutLayouts?.[workoutId] || [];
+  pageTitle.textContent = "Desktop Builder";
+  view.innerHTML = `<section class="builder-hero-v159">
+    <div><span>BUILDER ALIGNMENT</span><h2>Define exactly what mobile executes.</h2><p>No builder-only theory. Sets, reps, warm-ups, effort, rest, drops, muscle mapping and alternatives all publish to the gym flow.</p></div>
+    <strong>${state.builder.lastPublishedAt ? `Published ${niceDateTime(state.builder.lastPublishedAt)}` : "Draft not published"}</strong>
+  </section>
+
+  <section class="builder-layout-v159">
+    <aside class="builder-sidebar card">
+      <p class="label">Workouts</p>
+      <div class="builder-tab-stack">${renderBuilderWorkoutTabs(workoutId)}</div>
+      <button class="secondary full" data-action="builder-import-published" type="button">Reset draft from mobile programme</button>
+      <button class="primary full" data-action="builder-publish" type="button">Publish to mobile</button>
+    </aside>
+
+    <section class="builder-main-panel">
+      <div class="builder-program-summary card">
+        <div><p class="label">Selected workout</p><h3>${escapeHtml(builderWorkoutTitle(workoutId))}</h3><p class="muted">${rows.length} exercises · ${totalBuilderHardSets(rows)} working sets · ${escapeHtml(builderMuscleSummary(rows))}</p></div>
+        <div class="button-row"><button class="secondary small" data-action="builder-add-library" type="button">Add from library</button><button class="ghost small" data-action="builder-add-blank" type="button">Add blank</button></div>
+      </div>
+
+      <section class="builder-mobile-contract card">
+        <p class="label">Mobile contract</p>
+        <div class="contract-grid-v159">
+          <span>Workout list</span><span>Exercise focus</span><span>Rest screen</span><span>Drops</span><span>Swaps</span><span>Report mapping</span><span>Cardio separate</span><span>Cloud backup</span>
+        </div>
+      </section>
+
+      <section class="builder-program-summary card builder-cardio-handoff">
+        <div><p class="label">Cardio builder</p><h3>Cardio stays outside lifting</h3><p class="muted">${ensureCardioState().prescriptions.length} saved prescriptions · ${ensureCardioState().templates.length} templates. Time, HR, incline, level, pace and instructions are defined in the Cardio planner and logged separately on mobile.</p></div>
+        <button class="secondary small" data-route-jump="cardio" type="button">Open cardio planner</button>
+      </section>
+
+      <section class="builder-program-summary card builder-adhoc-handoff">
+        <div><p class="label">Workout on the fly</p><h3>Mobile-only ad-hoc execution</h3><p class="muted">Blank workouts, extra daily sessions and mini sessions remain executable on mobile. Saved programme workouts are controlled here.</p></div>
+        <button class="ghost small" data-route-jump="training" type="button">Open training</button>
+      </section>
+
+      <section class="builder-exercise-stack">${rows.map(renderBuilderExerciseRow).join("") || `<p class="muted">No exercises in this draft.</p>`}</section>
+
+      <section class="builder-preview-v159 card">
+        <p class="label">Mobile preview</p>
+        <h3>${escapeHtml(builderWorkoutTitle(workoutId))}</h3>
+        <div class="builder-phone-preview">${rows.map((row, index) => `<button type="button"><b>${String(index + 1).padStart(2, "0")}</b><span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.muscle)} · ${row.warmupCount} warm-up · ${row.sets} work · ${row.reps} · ${row.restSeconds}s</small></span></button>`).join("")}</div>
+      </section>
+    </section>
+  </section>`;
+  attachBuilderHandlers();
+}
+
+function updateBuilderField(input) {
+  const workoutId = builderSelectedWorkout();
+  const rows = builderDraftRows(workoutId);
+  const index = Number(input.dataset.index);
+  const field = input.dataset.builderField;
+  const row = rows[index];
+  if (!row || !field) return;
+  if (input.type === "checkbox") row[field] = input.checked;
+  else if (["sets", "warmupCount", "restSeconds", "dropPercent"].includes(field)) row[field] = Number(input.value || 0);
+  else row[field] = input.value;
+  if (field === "type" && !Number(row.restSeconds)) row.restSeconds = defaultRestSeconds(row.type);
+  if (field === "loadMode") Object.assign(row, loadModeConfig(row.loadMode));
+  rows[index] = normalizeBuilderBlueprint(row, index);
+  saveState();
+  const head = input.closest(".builder-exercise-row")?.querySelector(".builder-row-head div");
+  if (head) head.innerHTML = `<h3>${escapeHtml(rows[index].name)}</h3><p>${escapeHtml(rows[index].muscle)} · ${rows[index].sets}×${escapeHtml(rows[index].reps)} · ${rows[index].restSeconds}s rest</p>`;
+}
+
+function addBuilderExercise(blank = false) {
+  const workoutId = builderSelectedWorkout();
+  const rows = builderDraftRows(workoutId);
+  let blueprint;
+  if (!blank) {
+    const library = exerciseLibraryItems();
+    const names = library.slice(0, 25).map((item, i) => `${i + 1}. ${item.name} (${item.muscle})`).join("\n");
+    const choice = prompt(`Choose library exercise number, or type a new exercise name:\n\n${names}`);
+    if (!choice) return;
+    const number = Number(choice);
+    blueprint = Number.isFinite(number) && library[number - 1] ? library[number - 1] : { name: choice, muscle: "Other", type: "isolation", sets: 3, reps: "8–12" };
+  } else {
+    blueprint = { name: "New exercise", muscle: "Other", type: "isolation", sets: 3, reps: "8–12" };
+  }
+  rows.push(normalizeBuilderBlueprint({ ...blueprint, exerciseId: blueprint.exerciseId || `builder-${uid()}`, variantId: blueprint.variantId || blueprint.exerciseId || `builder-${uid()}`, custom: true }, rows.length));
+  saveState();
+  renderBuilder();
+}
+
+function builderMove(index, dir) {
+  const rows = builderDraftRows();
+  const next = index + dir;
+  if (next < 0 || next >= rows.length) return;
+  const [row] = rows.splice(index, 1);
+  rows.splice(next, 0, row);
+  saveState();
+  renderBuilder();
+}
+
+function builderDuplicate(index) {
+  const rows = builderDraftRows();
+  const row = rows[index];
+  if (!row) return;
+  rows.splice(index + 1, 0, normalizeBuilderBlueprint({ ...safeClone(row), exerciseId: `builder-${uid()}`, variantId: `builder-${uid()}`, name: `${row.name} copy` }, index + 1));
+  saveState();
+  renderBuilder();
+}
+
+function builderRemove(index) {
+  const rows = builderDraftRows();
+  if (rows.length <= 1) return showNotice("A workout needs at least one exercise.", "warn");
+  rows.splice(index, 1);
+  saveState();
+  renderBuilder();
+}
+
+function builderImportPublished() {
+  const workoutId = builderSelectedWorkout();
+  if (!confirm("Reset this draft from the current mobile programme?")) return;
+  state.builder.draftLayouts[workoutId] = (state.settings.workoutLayouts?.[workoutId] || (PROGRAM[workoutId]?.exercises || []).map(blueprintFromProgramExercise)).map(normalizeBuilderBlueprint);
+  saveState();
+  renderBuilder();
+}
+
+function builderPublish() {
+  ensureBuilderState();
+  state.settings.workoutLayouts = state.settings.workoutLayouts || {};
+  Object.entries(state.builder.draftLayouts).forEach(([workoutId, rows]) => {
+    state.settings.workoutLayouts[workoutId] = rows.map((row, index) => normalizeBuilderBlueprint(row, index));
+  });
+  state.builder.lastPublishedAt = new Date().toISOString();
+  saveState();
+  queueCloudBackup({ delay: 900 });
+  showNotice("Builder published to mobile workouts.", "good");
+  renderBuilder();
+}
+
+function attachBuilderHandlers() {
+  view.querySelectorAll("[data-action='builder-select-workout']").forEach((button) => button.addEventListener("click", () => {
+    ensureBuilderState();
+    state.builder.selectedWorkoutId = button.dataset.workoutId;
+    saveState();
+    renderBuilder();
+  }));
+  view.querySelectorAll("[data-builder-field]").forEach((input) => {
+    input.addEventListener("change", () => updateBuilderField(input));
+    input.addEventListener("blur", () => updateBuilderField(input));
+  });
+  view.querySelectorAll("[data-action='builder-move']").forEach((button) => button.addEventListener("click", () => builderMove(Number(button.dataset.index), Number(button.dataset.dir))));
+  view.querySelectorAll("[data-action='builder-duplicate']").forEach((button) => button.addEventListener("click", () => builderDuplicate(Number(button.dataset.index))));
+  view.querySelectorAll("[data-action='builder-remove']").forEach((button) => button.addEventListener("click", () => builderRemove(Number(button.dataset.index))));
+  view.querySelector("[data-action='builder-add-library']")?.addEventListener("click", () => addBuilderExercise(false));
+  view.querySelector("[data-action='builder-add-blank']")?.addEventListener("click", () => addBuilderExercise(true));
+  view.querySelector("[data-action='builder-import-published']")?.addEventListener("click", builderImportPublished);
+  view.querySelector("[data-action='builder-publish']")?.addEventListener("click", builderPublish);
+  view.querySelectorAll("[data-route-jump]").forEach((button) => button.addEventListener("click", () => setRoute(button.dataset.routeJump)));
+}
+
+const STRATA_V159_BASE_BUILD_SESSION_LOG = buildSessionLog;
+buildSessionLog = function buildSessionLogV159(blueprint, bodyweight) {
+  const normalized = normalizeBuilderBlueprint(blueprint);
+  const previousLog = latestExerciseHistoryLog(normalized);
+  const previousWarmups = (previousLog?.sets || []).filter((set) => set.setType === "warmup");
+  const previousWorking = (previousLog?.sets || []).filter((set) => set.setType !== "warmup");
+  const warmupSets = Array.from({ length: Number(normalized.warmupCount || 0) }, (_, setIndex) => ({
+    weight: previousWarmups?.[setIndex]?.weight ?? "",
+    reps: "",
+    rir: "",
+    rpe: "",
+    setType: "warmup",
+    completed: false,
+    previousWeight: previousWarmups?.[setIndex]?.weight ?? "",
+    previousReps: previousWarmups?.[setIndex]?.reps ?? "",
+    drops: []
+  }));
+  const workingSets = Array.from({ length: Number(normalized.sets || 3) }, (_, setIndex) => ({
+    weight: previousWorking?.[setIndex]?.weight ?? "",
+    reps: "",
+    rir: "",
+    rpe: "",
+    setType: previousWorking?.[setIndex]?.setType || (setIndex === 0 && normalized.type === "strength" ? "top" : "work"),
+    completed: false,
+    previousWeight: previousWorking?.[setIndex]?.weight ?? "",
+    previousReps: previousWorking?.[setIndex]?.reps ?? "",
+    drops: []
+  }));
+  return {
+    exerciseId: normalized.exerciseId,
+    variantId: normalized.variantId || normalized.exerciseId,
+    custom: Boolean(normalized.custom),
+    name: normalized.name,
+    muscle: normalized.muscle || "Other",
+    secondaryMuscles: normalized.secondaryMuscles || "",
+    type: normalized.type || "isolation",
+    targetSets: Number(normalized.sets || 3),
+    targetReps: normalized.reps || "8–12",
+    effortTarget: normalized.effortTarget || "RPE 8–9",
+    progressionRule: normalized.progressionRule || "double_progression",
+    loadLabel: normalized.loadLabel || "kg",
+    loadMultiplier: Number(normalized.loadMultiplier || 1),
+    repMultiplier: Number(normalized.repMultiplier || 1),
+    volumeMode: normalized.volumeMode || "external",
+    allowZeroWeight: Boolean(normalized.allowZeroWeight),
+    bodyweight: Number(bodyweight || 0),
+    restSeconds: Number(normalized.restSeconds || defaultRestSeconds(normalized.type)),
+    plannedDrop: Boolean(normalized.allowDropSet),
+    drop: null,
+    alternatives: normalized.alternatives || "",
+    cue: normalized.cue || "",
+    feedback: { target: "", joints: "", execution: "" },
+    setupNote: normalized.setupNote || state.settings.exerciseSetup?.[normalized.variantId || normalized.exerciseId] || "",
+    sets: [...warmupSets, ...workingSets]
+  };
+};
+
+const STRATA_V159_BASE_START_WORKOUT = startWorkout;
+startWorkout = function startWorkoutV159(workoutId) {
+  if (workoutId === "adhoc") return STRATA_V159_BASE_START_WORKOUT(workoutId);
+  const workout = PROGRAM[workoutId];
+  if (!workout) return;
+  const bodyweight = Number(getWeightForDate(todayISO())?.weight || getLatestWeight()?.weight || 0);
+  state.activeSession = {
+    id: uid(),
+    workoutId,
+    workoutTitle: workout.title,
+    date: todayISO(),
+    startedAt: new Date().toISOString(),
+    activeExerciseIndex: 0,
+    focusMode: "overview",
+    bodyweight,
+    logs: getWorkoutBlueprints(workoutId).map((blueprint) => buildSessionLog(blueprint, bodyweight)),
+    notes: ""
+  };
+  saveState();
+  setRoute("training");
+};
+
+const STRATA_V159_BASE_BLUEPRINT_FROM_LOG = blueprintFromLog;
+blueprintFromLog = function blueprintFromLogV159(log) {
+  return normalizeBuilderBlueprint({
+    ...STRATA_V159_BASE_BLUEPRINT_FROM_LOG(log),
+    warmupCount: (log.sets || []).filter((set) => set.setType === "warmup").length,
+    effortTarget: log.effortTarget,
+    progressionRule: log.progressionRule,
+    allowDropSet: log.plannedDrop,
+    cue: log.cue,
+    setupNote: log.setupNote,
+    alternatives: log.alternatives,
+    secondaryMuscles: log.secondaryMuscles
+  });
+};
+
+const STRATA_V159_BASE_ALTERNATIVES = alternativeOptionsForLog;
+alternativeOptionsForLog = function alternativeOptionsForLogV159(log) {
+  const builderNames = String(log.alternatives || "").split(",").map((name) => name.trim()).filter(Boolean);
+  const library = exerciseLibraryItems();
+  const builderItems = builderNames.map((name) => {
+    const found = library.find((item) => item.name.toLowerCase() === name.toLowerCase());
+    return found || normalizeBuilderBlueprint({ name, muscle: log.muscle, type: log.type, sets: log.targetSets, reps: log.targetReps, restSeconds: log.restSeconds, custom: true });
+  });
+  const seen = new Set();
+  return [...builderItems, ...STRATA_V159_BASE_ALTERNATIVES(log)].filter((item) => {
+    const key = exerciseIdentity(item);
+    if (!key || key === exerciseIdentity(log) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 12);
+};
+
+function injectBuilderEntryCard() {
+  return;
+  if (view.querySelector("[data-builder-entry-card]")) return;
+  const anchor = view.querySelector(".cardio-today-card") || view.querySelector(".active-session-card") || view.firstElementChild;
+  const card = document.createElement("section");
+  card.className = "card builder-entry-card";
+  card.setAttribute("data-builder-entry-card", "true");
+  card.innerHTML = `<p class="label">Desktop builder</p><h3>Programme control room</h3><p class="muted">Edit the lifting programme fields mobile actually uses: sets, reps, warm-ups, rest, effort, drops, swaps and report mapping.</p><button class="secondary full" data-route-jump="builder" type="button">Open builder</button>`;
+  if (anchor) anchor.insertAdjacentElement("afterend", card);
+  else view.appendChild(card);
+  card.querySelector("[data-route-jump='builder']")?.addEventListener("click", () => setRoute("builder"));
+}
+
+const STRATA_V159_BASE_RENDER = render;
+render = function renderV159() {
+  if (route === "builder") return renderBuilder();
+  return STRATA_V159_BASE_RENDER();
+};
+
+const STRATA_V159_BASE_RENDER_TODAY = renderToday;
+renderToday = function renderTodayV159() {
+  STRATA_V159_BASE_RENDER_TODAY();
+  injectBuilderEntryCard();
+};
+
+ensureBuilderState();
+if (route === "today") renderToday();
+
+
+/* =========================================================
+   STRATA v1.5.10 — Frozen Build Stabilisation
+   Scope: no new features. Stabilises active workout protection, progression
+   honesty, setup/cue visibility, builder validation and version clarity.
+   ========================================================= */
+
+function activeWorkoutDecision(nextWorkoutId) {
+  if (!state.activeSession) return "start";
+  const currentTitle = sessionTitle(state.activeSession);
+  const nextTitle = PROGRAM[nextWorkoutId]?.title || (nextWorkoutId === "adhoc" ? "Workout on the fly" : "new workout");
+  const choice = prompt(
+    `A workout is already in progress: ${currentTitle}.\n\nYou are trying to start: ${nextTitle}.\n\nType R to resume current workout.\nType D to discard current workout and start the new one.\nType C to cancel.`,
+    "R"
+  );
+  const value = String(choice || "C").trim().toLowerCase();
+  if (value === "d" || value === "discard") return "discard";
+  if (value === "r" || value === "resume") return "resume";
+  return "cancel";
+}
+
+const STRATA_V1510_BASE_START_WORKOUT = startWorkout;
+startWorkout = function startWorkoutV1510(workoutId) {
+  if (state.activeSession) {
+    const decision = activeWorkoutDecision(workoutId);
+    if (decision === "resume") {
+      setRoute("training");
+      return;
+    }
+    if (decision === "cancel") return;
+    if (decision === "discard") {
+      state.activeSession = null;
+      saveState();
+    }
+  }
+  return STRATA_V1510_BASE_START_WORKOUT(workoutId);
+};
+
+function normalizeProgressionRuleV1510(rule) {
+  return rule === "double_progression" ? "double_progression" : "manual_note";
+}
+
+const STRATA_V1510_BASE_NORMALIZE_BUILDER_BLUEPRINT = normalizeBuilderBlueprint;
+normalizeBuilderBlueprint = function normalizeBuilderBlueprintV1510(item = {}, fallbackIndex = 0) {
+  const row = STRATA_V1510_BASE_NORMALIZE_BUILDER_BLUEPRINT(item, fallbackIndex);
+  if (Object.prototype.hasOwnProperty.call(item, "name")) row.name = item.name;
+  if (Object.prototype.hasOwnProperty.call(item, "muscle")) row.muscle = item.muscle;
+  if (Object.prototype.hasOwnProperty.call(item, "primaryMuscle")) row.muscle = item.primaryMuscle;
+  if (Object.prototype.hasOwnProperty.call(item, "reps")) row.reps = item.reps;
+  if (Object.prototype.hasOwnProperty.call(item, "restSeconds")) row.restSeconds = Number(item.restSeconds);
+  if (Object.prototype.hasOwnProperty.call(item, "sets")) row.sets = Number(item.sets);
+  if (Object.prototype.hasOwnProperty.call(item, "loadMultiplier")) row.loadMultiplier = Number(item.loadMultiplier);
+  const originalRule = item.progressionRule || row.progressionRule;
+  row.progressionRule = normalizeProgressionRuleV1510(originalRule);
+  row.manualProgressionNote = item.manualProgressionNote || item.progressionNote || (originalRule && originalRule !== "double_progression" ? "Manual progression note — not automated." : "");
+  return row;
+};
+
+builderProgressionOptions = function builderProgressionOptionsV1510(value) {
+  const normalized = normalizeProgressionRuleV1510(value);
+  const options = [
+    ["double_progression", "Double progression"],
+    ["manual_note", "Manual progression note"]
+  ];
+  return options.map(([id, label]) => `<option value="${id}" ${id === normalized ? "selected" : ""}>${label}</option>`).join("");
+};
+
+const STRATA_V1510_BASE_RENDER_BUILDER_EXERCISE_ROW = renderBuilderExerciseRow;
+renderBuilderExerciseRow = function renderBuilderExerciseRowV1510(row, index) {
+  const html = STRATA_V1510_BASE_RENDER_BUILDER_EXERCISE_ROW(row, index);
+  const replacement = `<label class="field"><span>Progression</span><select data-builder-field="progressionRule" data-index="${index}">${builderProgressionOptions(row.progressionRule)}</select></label>
+      <label class="field form-span-2 manual-progression-field"><span>Manual progression note</span><input data-builder-field="manualProgressionNote" data-index="${index}" value="${escapeHtml(row.manualProgressionNote || "")}" placeholder="Only shown when not using double progression" /></label>`;
+  return html.replace(/<label class="field"><span>Progression<\/span><select data-builder-field="progressionRule" data-index="\d+">[\s\S]*?<\/select><\/label>/, replacement);
+};
+
+function setupCueCardMarkup(log) {
+  const setup = String(log.setupNote || "").trim();
+  const cue = String(log.cue || "").trim();
+  if (!setup && !cue) return "";
+  return `<section class="mobile-setup-cue-card">
+    ${setup ? `<div><span>⚙ Setup</span><strong>${escapeHtml(setup)}</strong></div>` : ""}
+    ${cue ? `<div><span>🎯 Cue</span><strong>${escapeHtml(cue)}</strong></div>` : ""}
+  </section>`;
+}
+
+const STRATA_V1510_BASE_EXERCISE_LOG_CARD = exerciseLogCard;
+exerciseLogCard = function exerciseLogCardV1510(log, index, workoutId) {
+  const html = STRATA_V1510_BASE_EXERCISE_LOG_CARD(log, index, workoutId);
+  const cueMarkup = setupCueCardMarkup(log);
+  if (!cueMarkup) return html;
+  return html.replace(/(<section class="current-set-panel[\s\S]*?<\/section>)/, `${cueMarkup}$1`);
+};
+
+const STRATA_V1510_BASE_BUILD_SESSION_LOG = buildSessionLog;
+buildSessionLog = function buildSessionLogV1510(blueprint, bodyweight) {
+  const log = STRATA_V1510_BASE_BUILD_SESSION_LOG(blueprint, bodyweight);
+  const normalized = normalizeBuilderBlueprint(blueprint);
+  log.progressionRule = normalizeProgressionRuleV1510(normalized.progressionRule);
+  log.manualProgressionNote = normalized.manualProgressionNote || "";
+  log.cue = normalized.cue || "";
+  log.setupNote = normalized.setupNote || log.setupNote || "";
+  return log;
+};
+
+const STRATA_V1510_BASE_DOUBLE_PROGRESSION_SIGNAL = doubleProgressionSignal;
+doubleProgressionSignal = function doubleProgressionSignalV1510(log) {
+  if (log?.progressionRule && log.progressionRule !== "double_progression") {
+    return {
+      ready: false,
+      label: "Manual progression note",
+      detail: log.manualProgressionNote || "This exercise is not automated. Follow the manual progression note from the builder."
+    };
+  }
+  return STRATA_V1510_BASE_DOUBLE_PROGRESSION_SIGNAL(log);
+};
+
+function validateBuilderDrafts() {
+  ensureBuilderState();
+  const errors = [];
+  const warnings = [];
+  Object.entries(state.builder.draftLayouts || {}).forEach(([workoutId, rows]) => {
+    const workoutName = builderWorkoutTitle(workoutId);
+    const normalizedRows = (rows || []).map(normalizeBuilderBlueprint);
+    let hardSets = 0;
+    let dropEnabled = 0;
+    if (!normalizedRows.length) {
+      errors.push({ workout: workoutName, exercise: "Workout", message: "At least one exercise is required." });
+    }
+    normalizedRows.forEach((row, index) => {
+      const label = row.name || `Exercise ${index + 1}`;
+      hardSets += Number(row.sets || 0);
+      if (row.allowDropSet) dropEnabled += 1;
+      if (!String(row.name || "").trim()) errors.push({ workout: workoutName, exercise: label, message: "Exercise name is required." });
+      if (!String(row.muscle || "").trim()) errors.push({ workout: workoutName, exercise: label, message: "Primary muscle is required for reporting." });
+      if (Number(row.sets || 0) < 1) errors.push({ workout: workoutName, exercise: label, message: "At least one work set is required." });
+      if (!String(row.reps || "").trim()) errors.push({ workout: workoutName, exercise: label, message: "Rep range is required." });
+      if (!Number.isFinite(Number(row.restSeconds)) || Number(row.restSeconds) < 0) errors.push({ workout: workoutName, exercise: label, message: "Rest time must be set." });
+      if (!Number.isFinite(Number(row.loadMultiplier)) || Number(row.loadMultiplier) <= 0) errors.push({ workout: workoutName, exercise: label, message: "Load multiplier must be greater than zero." });
+      if (!String(row.alternatives || "").trim()) warnings.push({ workout: workoutName, exercise: label, message: "No swap alternatives set." });
+      if (!String(row.setupNote || "").trim()) warnings.push({ workout: workoutName, exercise: label, message: "No setup note added." });
+      if (!String(row.cue || "").trim()) warnings.push({ workout: workoutName, exercise: label, message: "No mobile cue added." });
+    });
+    if (normalizedRows.length > 10) warnings.push({ workout: workoutName, exercise: "Workout", message: "This workout may be long for mobile execution." });
+    if (hardSets > 30) warnings.push({ workout: workoutName, exercise: "Workout", message: "High set count. Check recovery and session length." });
+    if (dropEnabled > 4) warnings.push({ workout: workoutName, exercise: "Workout", message: "Many drop-set options enabled. Confirm this is intentional." });
+  });
+  return { errors, warnings, checkedAt: new Date().toISOString() };
+}
+
+function compactValidationList(items) {
+  return (items || []).slice(0, 18).map((item) => `- ${item.workout} · ${item.exercise}: ${item.message}`).join("\n");
+}
+
+function renderBuilderValidationPanel() {
+  const validation = state.builder?.validation;
+  if (!validation || (!validation.errors?.length && !validation.warnings?.length)) return "";
+  const hasErrors = validation.errors?.length;
+  return `<section class="builder-validation-panel card ${hasErrors ? "has-errors" : "has-warnings"}">
+    <p class="label">${hasErrors ? "Cannot publish yet" : "Ready to publish with warnings"}</p>
+    ${validation.errors?.length ? `<div class="validation-group"><h3>Blocking errors</h3>${validation.errors.map((item) => `<p><strong>${escapeHtml(item.workout)} · ${escapeHtml(item.exercise)}</strong><span>${escapeHtml(item.message)}</span></p>`).join("")}</div>` : ""}
+    ${validation.warnings?.length ? `<div class="validation-group"><h3>Warnings</h3>${validation.warnings.map((item) => `<p><strong>${escapeHtml(item.workout)} · ${escapeHtml(item.exercise)}</strong><span>${escapeHtml(item.message)}</span></p>`).join("")}</div>` : ""}
+  </section>`;
+}
+
+const STRATA_V1510_BASE_RENDER_BUILDER = renderBuilder;
+renderBuilder = function renderBuilderV1510() {
+  STRATA_V1510_BASE_RENDER_BUILDER();
+  const panel = renderBuilderValidationPanel();
+  if (panel) view.querySelector(".builder-hero-v159")?.insertAdjacentHTML("afterend", panel);
+};
+
+builderPublish = function builderPublishV1510() {
+  ensureBuilderState();
+  const validation = validateBuilderDrafts();
+  if (validation.errors.length) {
+    state.builder.validation = validation;
+    saveState();
+    renderBuilder();
+    showNotice("Cannot publish yet. Fix the blocking builder errors.", "danger", 6500);
+    return;
+  }
+  if (validation.warnings.length) {
+    state.builder.validation = validation;
+    const ok = confirm(`Ready to publish with warnings:\n\n${compactValidationList(validation.warnings)}\n\nPublish anyway?`);
+    if (!ok) {
+      saveState();
+      renderBuilder();
+      showNotice("Publish cancelled. Review the warnings.", "warn", 5000);
+      return;
+    }
+  }
+  state.settings.workoutLayouts = state.settings.workoutLayouts || {};
+  Object.entries(state.builder.draftLayouts).forEach(([workoutId, rows]) => {
+    state.settings.workoutLayouts[workoutId] = rows.map((row, index) => normalizeBuilderBlueprint(row, index));
+  });
+  state.builder.lastPublishedAt = new Date().toISOString();
+  state.builder.validation = null;
+  saveState();
+  queueCloudBackup({ delay: 900 });
+  showNotice("Programme published to mobile.", "good");
+  renderBuilder();
+};
+
+const STRATA_V1510_BASE_BLUEPRINT_FROM_LOG = blueprintFromLog;
+blueprintFromLog = function blueprintFromLogV1510(log) {
+  return normalizeBuilderBlueprint({
+    ...STRATA_V1510_BASE_BLUEPRINT_FROM_LOG(log),
+    progressionRule: log.progressionRule,
+    manualProgressionNote: log.manualProgressionNote,
+    cue: log.cue,
+    setupNote: log.setupNote
+  });
+};
+
+// Refresh builder state after the stabilisation overrides so old draft rules are made honest.
+ensureBuilderState();
+saveState();

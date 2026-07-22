@@ -1,1 +1,28 @@
-STRATA v1.5.3 QA: built-in Supabase config, sign-in only, auto restore/merge on sign-in, debounced auto-sync after bodyweight changes and workout completion.
+STRATA v1.5.11 QA — Separate Mobile/Desktop Pages
+
+1. Open index.html.
+   Expected: Mobile app opens on Today. Bottom nav visible. No Desktop Builder card on Today.
+
+2. Open desktop.html.
+   Expected: Desktop Builder opens directly. No mobile bottom nav.
+
+3. From desktop.html, click Open mobile app.
+   Expected: navigates to index.html.
+
+4. From mobile Account, click Open desktop builder.
+   Expected: navigates to desktop.html.
+
+5. Mobile Cardio.
+   Expected: cardio logging visible. Desktop prescription builder not shown.
+
+6. Desktop Cardio planner.
+   Expected: cardio prescription planner visible. Mobile log/history panels not shown.
+
+7. Publish from desktop builder.
+   Expected: published workout appears when starting workout on mobile.
+
+8. Start a workout on mobile, log a set, then attempt another workout.
+   Expected: active workout protection still prevents silent overwrite.
+
+9. Sync.
+   Expected: builder layouts, cardio data and workout history still back up correctly.

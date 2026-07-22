@@ -1,1 +1,16 @@
-STRATA v1.5.3 — proper sign-in + auto-sync
+Build: STRATA v1.5.11 — Separate Mobile/Desktop Pages
+
+Deployment: static site.
+Build command: echo "No build required"
+Publish directory: .
+
+Entry pages:
+- index.html = mobile execution app
+- desktop.html = desktop builder/planner
+
+Service-worker cache: strata-v1-5-11
+
+Notes:
+- Mobile page must not show the builder card.
+- Desktop page must open directly into Builder.
+- Cardio logging stays mobile; cardio prescription planning lives on desktop.
