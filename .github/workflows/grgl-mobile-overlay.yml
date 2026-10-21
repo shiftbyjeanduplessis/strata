@@ -1,0 +1,46 @@
+name: GRGL mobile hub overlay
+
+on:
+  push:
+    branches:
+      - grgl-demo-live
+    paths:
+      - grgl-deploy/mobile-hub.html
+
+permissions:
+  contents: write
+
+jobs:
+  repack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GRGL demo branch
+        uses: actions/checkout@v4
+        with:
+          ref: grgl-demo-live
+          fetch-depth: 0
+
+      - name: Overlay mobile hub into live bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/grgl-live
+          mkdir -p /tmp/grgl-live
+          base64 -d grgl-deploy/grgl-live.b64 | tar -xzf - -C /tmp/grgl-live
+          cp grgl-deploy/mobile-hub.html /tmp/grgl-live/mobile-hub.html
+          tar -czf /tmp/grgl-live.tar.gz -C /tmp/grgl-live .
+          base64 -w 76 /tmp/grgl-live.tar.gz > grgl-deploy/grgl-live.b64
+
+      - name: Commit updated live bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- grgl-deploy/grgl-live.b64; then
+            echo "No bundle change required."
+            exit 0
+          fi
+          git config user.name "GRGL Demo Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add grgl-deploy/grgl-live.b64
+          git commit -m "Update GRGL mobile hub toggle"
+          git push origin HEAD:grgl-demo-live
